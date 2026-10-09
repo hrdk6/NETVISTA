@@ -493,7 +493,7 @@ export interface DetectorSummary {
 
 export interface CopilotBrief {
   available: boolean;
-  provider: "anthropic" | "ollama" | "none";
+  provider: "anthropic" | "gemini" | "groq" | "ollama" | "none";
   label: string;
   local: boolean;
   busy: boolean;
@@ -511,6 +511,7 @@ export interface CopilotStatus extends CopilotBrief {
   reason: string;
   checked_at: number;
   transport: string | null;
+  backup?: string | null;
   conversations: number;
   tools: { name: string; kind: "read" | "simulate" | "propose"; local: boolean }[];
 }

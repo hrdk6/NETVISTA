@@ -3,7 +3,8 @@
 #   powershell -ExecutionPolicy Bypass -File scripts\run.ps1 -Rebuild   # force a fresh UI build
 #   powershell -ExecutionPolicy Bypass -File scripts\run.ps1 -Topology topologies\small.json
 # Stop with Ctrl+C. The backend runs as root inside WSL because Mininet needs it.
-# Copilot: put ANTHROPIC_API_KEY=... in .env at the repo root (see .env.example), or run Ollama.
+# Copilot: put GEMINI_API_KEY=... (and GROQ_API_KEY=... as backup) or ANTHROPIC_API_KEY=... in .env
+# at the repo root (see .env.example), or run Ollama.
 param(
     [switch]$Rebuild,
     [switch]$NoBrowser,
@@ -68,7 +69,8 @@ Say "Starting NETVISTA in WSL ($Distro) on $url  - Ctrl+C to stop"
 $env:NETVISTA_PORT = "$Port"
 # forward the copilot settings if they are set on the Windows side (a repo-root .env works too)
 $fwd = @("NETVISTA_PORT")
-foreach ($v in @("ANTHROPIC_API_KEY", "NETVISTA_AI_PROVIDER", "NETVISTA_AI_MODEL", "NETVISTA_OLLAMA_URL", "NETVISTA_OLLAMA_NUM_CTX")) {
+foreach ($v in @("ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GROQ_API_KEY", "NETVISTA_AI_PROVIDER", "NETVISTA_AI_BACKUP", "NETVISTA_AI_MODEL",
+                  "NETVISTA_GEMINI_MODEL", "NETVISTA_GROQ_MODEL", "NETVISTA_OLLAMA_URL", "NETVISTA_OLLAMA_NUM_CTX")) {
     if ([Environment]::GetEnvironmentVariable($v)) { $fwd += $v }
 }
 $env:WSLENV = ($fwd | ForEach-Object { "$_/u" }) -join ":"

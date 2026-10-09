@@ -276,7 +276,7 @@ everything else is measured).
 | Root | `wsl -u root` (used by the launcher) | `sudo` |
 | UI build | Node.js 18+ on Windows | Node.js 18+ |
 | Inside Linux | installed automatically: mininet, openvswitch-switch, iperf3, traceroute, Python venv (fastapi, simpy, networkx, anthropic) | same |
-| Copilot (optional) | an Anthropic API key in `.env`, **or** Ollama for Windows with a tool-capable model | an API key, or Ollama |
+| Copilot (optional) | a free Gemini key (Groq as backup) or an Anthropic key in `.env`, **or** Ollama for Windows with a tool-capable model | an API key, or Ollama |
 
 The WSL2 kernel (6.x) already ships the `openvswitch`, `sch_netem` and `sch_htb` modules. No VM
 is needed.
@@ -307,8 +307,13 @@ sudo bash scripts/run.sh            # first run calls scripts/setup_wsl.sh
 
 **Copilot setup** (optional; anomaly detection and root-cause analysis work without it):
 
-* **Claude (recommended):** copy `.env.example` to `.env` in the repo root, set
-  `ANTHROPIC_API_KEY=...`, and restart. The default model is `claude-opus-5-5`. Set
+* **Free: Gemini, with Groq as backup.** Copy `.env.example` to `.env` in the repo root and set
+  `GEMINI_API_KEY=...` (from [AI Studio](https://aistudio.google.com/apikey)) and optionally
+  `GROQ_API_KEY=...` (from [Groq](https://console.groq.com/keys)), then restart. Gemini 3.8 Flash
+  answers. When it is rate-limited, down or rejects its key, Groq's GPT-OSS 120B answers instead
+  (that round, then Gemini again after a 60 s rest), and the answer says so. Groq is the backup
+  because its free tier allows only ~8k tokens per minute.
+* **Claude:** set `ANTHROPIC_API_KEY=...` instead. The default model is `claude-opus-5-5`. Set
   `NETVISTA_AI_MODEL=claude-sonnet-5-5` or `claude-haiku-5-5` for cheaper, faster answers.
 * **Local, offline:** install [Ollama](https://ollama.com), pull a model with tool support
   (e.g. `ollama pull qwen3:8b`), and restart NETVISTA. It is found automatically, even though

@@ -117,11 +117,18 @@ function Intro() {
 export function SetupHelp() {
   return (
     <div className="space-y-3 text-[13.5px] text-ink-2">
-      <p className="text-ink">The copilot needs a language model. Pick one:</p>
+      <p className="text-ink">The copilot needs a language model. Pick one (keys go in the repo-root <code className="text-ink">.env</code>, then restart NETVISTA):</p>
       <div className="rounded-md border border-line p-3">
-        <p className="font-semibold text-ink">Claude (recommended)</p>
+        <p className="font-semibold text-ink">Free: Google Gemini, with Groq as backup</p>
         <p className="mt-1">
-          Create <code className="text-ink">C:\dev\NETVISTA\.env</code> containing <code className="text-ink">ANTHROPIC_API_KEY=…</code>, then restart NETVISTA.
+          <code className="text-ink">GEMINI_API_KEY=…</code> (aistudio.google.com/apikey) and optionally <code className="text-ink">GROQ_API_KEY=…</code>{" "}
+          (console.groq.com/keys). When Gemini is rate-limited or down, Groq answers.
+        </p>
+      </div>
+      <div className="rounded-md border border-line p-3">
+        <p className="font-semibold text-ink">Claude</p>
+        <p className="mt-1">
+          <code className="text-ink">ANTHROPIC_API_KEY=…</code> (console.anthropic.com).
         </p>
       </div>
       <div className="rounded-md border border-line p-3">

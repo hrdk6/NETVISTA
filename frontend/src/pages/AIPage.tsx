@@ -268,7 +268,24 @@ function CopilotCard() {
             <dt>Model</dt>
             <dd>{st.label}</dd>
             <dt>Connection</dt>
-            <dd>{st.provider === "anthropic" ? "Anthropic API" : st.transport === "win-interop" ? "Ollama on Windows, via WSL interop" : "Ollama over HTTP"}</dd>
+            <dd>
+              {st.provider === "anthropic"
+                ? "Anthropic API"
+                : st.provider === "gemini"
+                  ? "Google Gemini API"
+                  : st.provider === "groq"
+                    ? "Groq API"
+                    : st.transport === "win-interop"
+                      ? "Ollama on Windows, via WSL interop"
+                      : "Ollama over HTTP"}
+              {st.backup ? `; if it is rate-limited or down: ${st.backup}` : ""}
+            </dd>
+            {st.reason && (
+              <>
+                <dt>Note</dt>
+                <dd className="text-[#ffd27a]">{st.reason}</dd>
+              </>
+            )}
             <dt>Tools</dt>
             <dd>
               {count("read")} read, {count("simulate")} simulate, {count("propose")} propose

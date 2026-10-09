@@ -9,7 +9,8 @@ from netvista.ai.anomaly import WARMUP, AnomalyDetector
 from netvista.ai.copilot import context_window, grounding_check
 from netvista.ai.copilot.agent import Copilot
 from netvista.ai.copilot.grounding import extract_claims
-from netvista.ai.copilot.providers import LLMResponse, Provider, ToolCall, to_anthropic, to_ollama
+from netvista.ai.copilot.providers import (FallbackProvider, LLMResponse, OpenAICompatProvider, Provider, ProviderError, ToolCall,
+                                           ToolSchema, to_anthropic, to_ollama, to_openai)
 from netvista.ai.copilot.tools import Tool
 from netvista.ai.rca import FlowInfo, LinkLoad, SignalState, StreamObs, diagnose
 from netvista.ai.signals import SignalSpec, build_specs, gateway_path, path_elements
@@ -247,6 +248,122 @@ def test_message_conversion():
     assert ol[0] == {"role": "system", "content": "SYS"}
     assert ol[2]["tool_calls"][1]["function"] == {"name": "y", "arguments": {"k": 1}}
     assert ol[3] == {"role": "tool", "content": "1", "tool_name": "x"}
+
+
+def test_openai_conversion_carries_gemini_thought_signatures():
+    sig = {"google": {"thought_signature": "SIG-A"}}
+    msgs = [
+        {"role": "user", "content": "earlier"},
+        {"role": "assistant", "content": "", "tool_calls": [{"id": "o", "name": "x", "input": {}}]},  # an old turn, no signature
+        {"role": "tool", "tool_call_id": "o", "name": "x", "content": "0"},
+        {"role": "user", "content": "why?"},
+        {"role": "assistant", "content": "", "tool_calls": [{"id": "a", "name": "x", "input": {"k": 1}, "extra": sig}]},
+        {"role": "tool", "tool_call_id": "a", "name": "x", "content": "1"},
+        {"role": "assistant", "content": "", "tool_calls": [{"id": "b", "name": "y", "input": {}}, {"id": "c", "name": "y", "input": {}}]},
+    ]
+    gem = to_openai("SYS", msgs, gemini=True)
+    assert gem[0] == {"role": "system", "content": "SYS"}
+    assert "extra_content" not in gem[2]["tool_calls"][0]  # earlier turns are not validated
+    assert gem[5]["tool_calls"][0]["extra_content"] == sig and gem[5]["tool_calls"][0]["function"]["arguments"] == '{"k": 1}'
+    # a step the backup made in this turn: the first call gets Google's skip value, the parallel one nothing
+    assert gem[7]["tool_calls"][0]["extra_content"]["google"]["thought_signature"] == "skip_thought_signature_validator"
+    assert "extra_content" not in gem[7]["tool_calls"][1]
+    assert gem[6] == {"role": "tool", "tool_call_id": "a", "content": "1"}
+    groq = to_openai("SYS", msgs, gemini=False)
+    assert all("extra_content" not in c for m in groq for c in m.get("tool_calls", []))
+
+
+def _sse_provider(chunks, name="gemini"):
+    p = OpenAICompatProvider(name, name.title(), "https://example.invalid", "k", "m")
+    p.sent = []
+    p._stream = lambda payload: (p.sent.append(payload), iter(chunks))[1]
+    return p
+
+
+def test_openai_stream_assembles_text_and_fragmented_tool_calls():
+    chunks = [
+        {"choices": [{"delta": {"content": "Look"}}]},
+        {"choices": [{"delta": {"content": "ing."}}]},
+        {"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "c1", "function": {"name": "get_link_details", "arguments": '{"link'},
+                                                "extra_content": {"google": {"thought_signature": "S"}}}]}}]},
+        {"choices": [{"delta": {"tool_calls": [{"index": 0, "function": {"arguments": '_id": "r2-r5"}'}}]}}]},
+        {"choices": [{"delta": {}, "finish_reason": "tool_calls"}], "usage": {"prompt_tokens": 900, "completion_tokens": 40}},
+    ]
+    p = _sse_provider(chunks)
+    seen = []
+    tools = [ToolSchema("get_link_details", "d", {"type": "object", "properties": {}})]
+    r = p.chat("SYS", [{"role": "user", "content": "q"}], tools, seen.append)
+    assert r.text == "Looking." and "".join(seen) == "Looking."
+    assert r.tool_calls[0].name == "get_link_details" and r.tool_calls[0].input == {"link_id": "r2-r5"}
+    assert r.tool_calls[0].extra == {"google": {"thought_signature": "S"}} and r.stop_reason == "tool_use"
+    assert r.usage == {"input_tokens": 900, "output_tokens": 40}
+    assert p.sent[0]["tools"][0]["function"]["name"] == "get_link_details" and p.sent[0]["stream"] is True
+
+
+def test_fallback_uses_the_backup_while_the_primary_rests():
+    class Flaky(Provider):
+        def __init__(self, name, fail):
+            super().__init__(name)
+            self.name, self.fail, self.calls = name, fail, 0
+
+        def chat(self, system, messages, tools, on_text, max_tokens=2048, should_stop=lambda: False):
+            self.calls += 1
+            if self.fail:
+                raise ProviderError("Gemini rate limit or free-tier quota reached: quota", transient=True, retry_after=30)
+            return LLMResponse(f"from {self.name}")
+
+    gem, groq = Flaky("gemini", True), Flaky("groq", False)
+    fb = FallbackProvider(gem, groq)
+    notes = []
+    assert fb.chat("S", [], [], notes.append).text == "from groq"
+    assert "unavailable" in notes[0] and gem.calls == 1
+    fb.chat("S", [], [], notes.append)
+    assert gem.calls == 1 and groq.calls == 2  # resting: not even tried
+    fb.resting_until = 0
+    gem.fail = False
+    assert fb.chat("S", [], [], notes.append).text == "from gemini"
+    # a non-transient error (a bug in the request) is not hidden behind the backup
+    gem.chat = lambda *a, **k: (_ for _ in ()).throw(ProviderError("Gemini error 400: bad schema"))
+    with pytest.raises(ProviderError, match="bad schema"):
+        fb.chat("S", [], [], notes.append)
+
+
+def test_http_errors_say_whether_the_backup_should_answer():
+    p = OpenAICompatProvider("gemini", "Gemini", "https://example.invalid", "k", "m")
+    bad_key = p._http_error(400, '[{"error": {"code": 400, "message": "API key not valid. Please pass a valid API key."}}]', None)
+    assert "rejected the API key" in str(bad_key) and bad_key.transient  # Gemini answers 400, not 401
+    quota = p._http_error(429, '{"error": {"message": "Resource exhausted"}}', 12.0)
+    assert quota.transient and quota.retry_after == 12.0 and "~12 s" in str(quota)
+    assert p._http_error(503, "overloaded", None).transient
+    schema = p._http_error(400, '{"error": {"message": "Invalid JSON payload: tools[0]"}}', None)
+    assert not schema.transient and "tools[0]" in str(schema)  # our bug: shown, not hidden behind the backup
+
+
+def test_cloud_selection_and_bad_keys(monkeypatch):
+    from netvista.ai.copilot import providers as pv
+
+    for k in ("ANTHROPIC_API_KEY", "NETVISTA_AI_PROVIDER", "NETVISTA_AI_BACKUP", "NETVISTA_GEMINI_MODEL", "NETVISTA_GROQ_MODEL"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("GEMINI_API_KEY", "g")
+    monkeypatch.setenv("GROQ_API_KEY", "q")
+    verdict = {"gemini": "", "groq": ""}
+    monkeypatch.setattr(pv.OpenAICompatProvider, "check_key", lambda self, timeout=6.0: verdict[self.name])
+    p, st = pv.select_provider()
+    assert isinstance(p, pv.FallbackProvider) and p.primary.name == "gemini" and p.backup.name == "groq"
+    assert st.available and st.provider == "gemini" and "Groq" in st.backup and not p.compact
+    assert p.backup.compact and p.primary.model == "gemini-3.8-flash" and p.backup.model == "openai/gpt-oss-120b"
+    verdict["gemini"] = "Gemini rejected the API key (HTTP 400)"
+    p, st = pv.select_provider()
+    assert p.name == "groq" and "using Groq" in st.reason  # bad primary key: the backup runs alone
+    verdict["gemini"] = ""
+    monkeypatch.setenv("NETVISTA_AI_PROVIDER", "groq")
+    monkeypatch.setenv("NETVISTA_AI_BACKUP", "none")
+    p, st = pv.select_provider()
+    assert isinstance(p, pv.OpenAICompatProvider) and p.name == "groq" and st.backup is None
+    monkeypatch.setenv("NETVISTA_AI_PROVIDER", "gemini")
+    monkeypatch.delenv("GEMINI_API_KEY")
+    p, st = pv.select_provider()
+    assert p is None and "GEMINI_API_KEY is not set" in st.reason
 
 
 def test_context_window_stubs_old_tool_results():

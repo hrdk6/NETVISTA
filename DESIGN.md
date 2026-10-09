@@ -551,12 +551,28 @@ to the model, and the loop repeats (at most 8 rounds). The answer streams to the
 server-sent events.
 
 * **Providers** (`providers.py`). Claude through the Anthropic SDK (default `claude-opus-5-5`,
-  set with `NETVISTA_AI_MODEL`), with prompt caching on the static system prompt and tools. Or a
-  local model through Ollama's native `/api/chat` with `think: false` and a 12k context. It is
-  picked automatically: `ANTHROPIC_API_KEY` if set, otherwise the first tool-capable model of a
-  running Ollama. Under WSL2 NAT networking, Windows' 127.0.0.1 is unreachable from the
-  backend. So when plain HTTP fails, requests go through Windows' own `curl.exe` via WSL
-  interop (65 ms overhead), which needs no firewall rule or Ollama setting.
+  set with `NETVISTA_AI_MODEL`), with prompt caching on the static system prompt and tools.
+  Google Gemini and Groq through their OpenAI-compatible chat endpoints (one streaming client,
+  plain HTTP; free tiers work). Or a local model through Ollama's native `/api/chat` with
+  `think: false` and a 12k context. Picked automatically: `ANTHROPIC_API_KEY`, else
+  `GEMINI_API_KEY`, else `GROQ_API_KEY`, else the first tool-capable model of a running Ollama.
+  Keys are checked against each service's model list at start-up, so a bad key or model name
+  shows on the AI ops page instead of failing on the first question. Under WSL2 NAT networking,
+  Windows' 127.0.0.1 is unreachable from the backend. So when plain HTTP to Ollama fails,
+  requests go through Windows' own `curl.exe` via WSL interop (65 ms overhead), which needs no
+  firewall rule or Ollama setting.
+* **Primary and backup.** With both free keys, Gemini 3.8 Flash answers and Groq's GPT-OSS 120B
+  is the backup. A rate limit, an outage, a timeout or a rejected key hands that round to the
+  backup, the primary rests for 60 s (15 min after a rejected key), and the answer carries a
+  one-line note naming the backup. A malformed request is not hidden behind the backup: it is
+  shown. Groq is the backup, not the primary, because its free tier allows about 8k tokens per
+  minute. One copilot round is about 3.5k tokens (system prompt ~1k, the 20 tool schemas
+  ~2.3k), so Groq runs with the compact tool set and one turn of history, and waits once for
+  the rate window (up to 25 s) instead of failing. Gemini 3 needs one detail: every function call
+  carries an encrypted *thought signature* that must come back with the call in the next
+  request, or the API answers 400. The signature travels in the conversation as the call's
+  `extra` field, is returned exactly, and is stripped for Groq. A step the backup made in the
+  current turn has none, so its first call gets Google's documented skip value.
 * **Tools** (`tools.py`) come in three kinds, and the split is the safety model:
   * *read* (10): network status, link/node/flow details, AI insights, incidents, events,
     history, traceroute-style path, and twin/AI accuracy;

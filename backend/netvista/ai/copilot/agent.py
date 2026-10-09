@@ -208,20 +208,22 @@ class Copilot:
         conv.messages.append({"role": "user", "content": ("\n".join(prefix) + "\n\n" + text) if prefix else text})
         self.toolbox.conversation_id = conv.id
         system = system_prompt(self.rt)
-        tools = self.toolbox.schemas(local=provider.local)
+        tools = self.toolbox.schemas(local=provider.compact)
         usage = {"input_tokens": 0, "output_tokens": 0}
         answer_parts: list[str] = []
         rounds = 0
         while rounds < MAX_ROUNDS and not cancel.is_set():
             rounds += 1
             resp = provider.chat(
-                system, context_window(conv.messages, keep_turns=1 if provider.local else 3), tools,
+                system, context_window(conv.messages, keep_turns=1 if provider.compact else 3), tools,
                 on_text=lambda d: emit({"type": "text", "delta": d}),
-                max_tokens=1200 if provider.local else 3000, should_stop=cancel.is_set,
+                max_tokens=1200 if provider.compact else 3000, should_stop=cancel.is_set,
             )
             for k in usage:
                 usage[k] += int(resp.usage.get(k, 0) or 0)
-            calls = [{"id": tc.id, "name": tc.name, "input": tc.input} for tc in resp.tool_calls]
+            # "extra" (e.g. Gemini's thought signature) must go back to the model with its call
+            calls = [{"id": tc.id, "name": tc.name, "input": tc.input, **({"extra": tc.extra} if tc.extra else {})}
+                     for tc in resp.tool_calls]
             conv.messages.append({"role": "assistant", "content": resp.text, "tool_calls": calls})
             if resp.text.strip():
                 answer_parts.append(resp.text)
