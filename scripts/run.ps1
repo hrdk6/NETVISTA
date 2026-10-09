@@ -3,6 +3,7 @@
 #   powershell -ExecutionPolicy Bypass -File scripts\run.ps1 -Rebuild   # force a fresh UI build
 #   powershell -ExecutionPolicy Bypass -File scripts\run.ps1 -Topology topologies\small.json
 # Stop with Ctrl+C. The backend runs as root inside WSL because Mininet needs it.
+# Copilot: put ANTHROPIC_API_KEY=... in .env at the repo root (see .env.example), or run Ollama.
 param(
     [switch]$Rebuild,
     [switch]$NoBrowser,
@@ -64,8 +65,13 @@ if (-not $NoBrowser) { Start-Job -ScriptBlock {
 
 # 5. Run the backend (foreground) as root inside WSL
 Say "Starting NETVISTA in WSL ($Distro) on $url  - Ctrl+C to stop"
-$env:WSLENV = "NETVISTA_PORT/u"
 $env:NETVISTA_PORT = "$Port"
+# forward the copilot settings if they are set on the Windows side (a repo-root .env works too)
+$fwd = @("NETVISTA_PORT")
+foreach ($v in @("ANTHROPIC_API_KEY", "NETVISTA_AI_PROVIDER", "NETVISTA_AI_MODEL", "NETVISTA_OLLAMA_URL", "NETVISTA_OLLAMA_NUM_CTX")) {
+    if ([Environment]::GetEnvironmentVariable($v)) { $fwd += $v }
+}
+$env:WSLENV = ($fwd | ForEach-Object { "$_/u" }) -join ":"
 wsl.exe -d $Distro -u root -- bash "$wslRoot/scripts/run.sh" @extra
 Say "Stopping and cleaning up Mininet"
 wsl.exe -d $Distro -u root -- bash "$wslRoot/scripts/stop.sh" | Out-Null

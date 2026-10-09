@@ -96,7 +96,7 @@ export default function ValidationPage() {
         )}
       </section>
 
-      <div className="grid grid-cols-6 gap-3">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 2xl:grid-cols-6">
         <Stat label="Latency error, RTT p50" value={agg.p50} unit="%" />
         <Stat label="Latency error, RTT p95" value={agg.p95} unit="%" />
         <Stat label="Throughput error, per flow" value={agg.thr} unit="%" />
@@ -106,7 +106,7 @@ export default function ValidationPage() {
       </div>
 
       {runs.length > 0 && (
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid gap-3 lg:grid-cols-2">
           <ErrorChart
             title="Latency prediction error per run"
             data={chart}
@@ -133,6 +133,7 @@ export default function ValidationPage() {
             No validation runs yet. Run the suite above, or build a scenario on the What-if page and choose Validate live.
           </p>
         ) : (
+          <div className="table-scroll">
           <table className="data mt-2">
             <thead>
               <tr>
@@ -154,6 +155,7 @@ export default function ValidationPage() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </section>
     </div>
@@ -217,7 +219,7 @@ function RunRows({ r, n, open, toggle }: { r: ValidationRun; n: number; open: bo
         <tr>
           <td />
           <td colSpan={9}>
-            <div className="grid grid-cols-2 gap-x-6 gap-y-3 py-2">
+            <div className="grid gap-x-6 gap-y-3 py-2 lg:grid-cols-2">
               {pairs.map((p) => (
                 <table key={p} className="data">
                   <thead>

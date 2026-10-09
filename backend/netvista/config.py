@@ -9,6 +9,27 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
+def load_env_file(path: Path) -> None:
+    """KEY=VALUE lines from a git-ignored .env (e.g. ANTHROPIC_API_KEY). Real env vars win."""
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, val = line.split("=", 1)
+        key, val = key.strip().removeprefix("export ").strip(), val.strip()
+        if len(val) >= 2 and val[0] == val[-1] and val[0] in "\"'":
+            val = val[1:-1]
+        if key and key not in os.environ:
+            os.environ[key] = val
+
+
+load_env_file(REPO_ROOT / ".env")
+
+
 @dataclass
 class Settings:
     topology_path: Path = REPO_ROOT / "topologies" / "default.json"

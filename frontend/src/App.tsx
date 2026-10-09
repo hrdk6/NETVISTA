@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
+import CopilotDrawer from "./components/Copilot";
 import Header, { type Page } from "./components/Header";
 import { useStore } from "./lib/store";
+import AIPage from "./pages/AIPage";
 import JourneyPage from "./pages/JourneyPage";
 import LivePage from "./pages/LivePage";
 import MetricsPage from "./pages/MetricsPage";
@@ -8,10 +10,10 @@ import ScenariosPage from "./pages/ScenariosPage";
 import SimulatePage from "./pages/SimulatePage";
 import ValidationPage from "./pages/ValidationPage";
 
-const PAGES: Page[] = ["live", "simulate", "validation", "metrics", "journey", "scenarios"];
+const PAGES: Page[] = ["live", "simulate", "validation", "ai", "metrics", "journey", "scenarios"];
 
 function pageFromHash(): Page {
-  const h = location.hash.replace("#", "") as Page;
+  const h = location.hash.replace("#", "").split("?")[0] as Page;
   return PAGES.includes(h) ? h : "live";
 }
 
@@ -38,12 +40,14 @@ export default function App() {
             {page === "live" && <LivePage />}
             {page === "simulate" && <SimulatePage />}
             {page === "validation" && <ValidationPage />}
+            {page === "ai" && <AIPage />}
             {page === "metrics" && <MetricsPage />}
             {page === "journey" && <JourneyPage />}
             {page === "scenarios" && <ScenariosPage />}
           </>
         )}
       </main>
+      {topology && snap && <CopilotDrawer />}
       {toast && (
         <div
           role="status"

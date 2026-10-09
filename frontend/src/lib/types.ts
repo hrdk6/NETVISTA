@@ -224,6 +224,7 @@ export interface Snapshot {
   traffic: TrafficFlow[];
   agents: Record<string, boolean>;
   jobs?: Record<string, Record<string, unknown>>;
+  ai?: AISnapshot;
 }
 
 export interface NvEvent {
@@ -407,4 +408,174 @@ export interface ScenarioSummary {
   duration_s: number;
   actions: number;
   topology: string;
+}
+
+// ---------------------------------------------------------------- AIOps (backend/netvista/ai)
+export interface Anomaly {
+  id: number;
+  signal: string;
+  kind: "link" | "access" | "flow";
+  entity: string;
+  metric: "rtt" | "loss" | "util" | "data_loss";
+  unit: "ms" | "%" | "ratio";
+  label: string;
+  t_start: number;
+  t_raised: number;
+  t_end: number | null;
+  active: boolean;
+  value: number;
+  z: number;
+  peak_value: number;
+  peak_z: number;
+  normal_mean: number;
+  normal_scale: number;
+  normal_upper: number;
+  severity: "minor" | "major";
+}
+
+export interface Cause {
+  id: string;
+  type: "link_down" | "node_down" | "node_degraded" | "latency" | "packet_loss" | "congestion" | "traffic_surge";
+  element: string;
+  element_kind: string;
+  title: string;
+  confidence: "high" | "medium" | "low";
+  since: number | null;
+  evidence: string[];
+  explains: number;
+  contradicted_by: string[];
+  alternatives: string[];
+  affected_flows: string[];
+  rerouted_flows: { pair: string; from: string[] | null; to: string[] | null }[];
+  surge: { pair: string; rate_mbps: number } | null;
+}
+
+export interface Diagnosis {
+  t: number | null;
+  status: "learning" | "normal" | "degraded";
+  causes: Cause[];
+  consequences: string[];
+  unexplained: string[];
+  observed: { bad?: number; good?: number };
+}
+
+export interface DetectorSummary {
+  signals: number;
+  learning: number;
+  normal: number;
+  anomalous: number;
+  warmup_s: number;
+  warmup_progress: number | null;
+  learned_since: number | null;
+  params: { alpha: number; z_on: number; z_strong: number; z_off: number; n_on: number; n_off: number };
+}
+
+export interface CopilotBrief {
+  available: boolean;
+  provider: "anthropic" | "ollama" | "none";
+  label: string;
+  local: boolean;
+  busy: boolean;
+}
+
+export interface AISnapshot {
+  anomalies: Anomaly[];
+  diagnosis: Diagnosis;
+  detector: DetectorSummary;
+  copilot: CopilotBrief;
+}
+
+export interface CopilotStatus extends CopilotBrief {
+  model: string | null;
+  reason: string;
+  checked_at: number;
+  transport: string | null;
+  conversations: number;
+  tools: { name: string; kind: "read" | "simulate" | "propose"; local: boolean }[];
+}
+
+export interface SignalRow {
+  signal: string;
+  kind: Anomaly["kind"];
+  entity: string;
+  metric: Anomaly["metric"];
+  unit: Anomaly["unit"];
+  label: string;
+  state: "learning" | "normal" | "anomalous";
+  samples: number;
+  value: number | null;
+  normal_mean: number | null;
+  normal_scale: number | null;
+  normal_upper: number | null;
+  z: number | null;
+}
+
+export interface SignalPoint {
+  t: number;
+  value: number | null;
+  normal_mean: number | null;
+  normal_upper: number | null;
+  anomalous: boolean;
+}
+
+export interface Proposal {
+  id: string;
+  conversation_id: string | null;
+  action: "chaos_inject" | "chaos_revert" | "routing" | "traffic";
+  spec: Record<string, unknown>;
+  label: string;
+  reason: string | null;
+  t: number;
+  status: "pending" | "applied" | "dismissed" | "failed";
+  result: unknown;
+  t_decided: number | null;
+}
+
+export interface EvalRow {
+  label: string;
+  kind: string;
+  target: string;
+  expect_element: string;
+  expect_type: string[];
+  subtle: boolean;
+  ai_detected: boolean;
+  ai_detect_s: number | null;
+  ai_first_signal: string | null;
+  ai_anomalies: number;
+  threshold_detected: boolean;
+  threshold_detect_s: number | null;
+  threshold_flaps: number;
+  diagnosis: { title: string; type: string; element: string; confidence: string; alternatives: string[] } | null;
+  diagnosis_other_causes: string[];
+  diagnosis_location_ok: boolean;
+  diagnosis_type_ok: boolean;
+  diagnosis_correct: boolean;
+  diagnosis_correct_after_s: number | null;
+}
+
+export interface EvalSummary {
+  faults: number;
+  ai_detected: number;
+  threshold_detected: number;
+  ai_mean_detect_s: number | null;
+  threshold_mean_detect_s: number | null;
+  subtle_faults: number;
+  subtle_ai_detected: number;
+  subtle_threshold_detected: number;
+  diagnosis_correct: number;
+  diagnosis_location_ok: number;
+  diagnosis_accuracy_pct: number | null;
+  false_alarms: number | null;
+  false_alarms_per_min: number;
+  threshold_false_alarms: number | null;
+  threshold_flaps_during_faults: number;
+}
+
+export interface EvalRun {
+  id: string;
+  t: number;
+  duration_s: number;
+  quiet: { duration_s: number; ai_false_alarms: number; ai_false_alarm_signals: string[]; threshold_false_alarms: number; diagnosis_false_s: number } | null;
+  scenarios: EvalRow[];
+  summary: EvalSummary;
 }

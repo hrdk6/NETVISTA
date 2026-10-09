@@ -9,6 +9,8 @@ dependencies = [
   "pydantic>=2.7,<3",
   "networkx>=3.2",
   "simpy>=4.1",
+  "httpx>=0.27",
+  "anthropic>=0.60",
 ]
 
 [project.optional-dependencies]

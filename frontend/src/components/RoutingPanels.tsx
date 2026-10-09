@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { flowStyle } from "../lib/colors";
 import { ago, corePath, ms, num, pairLabel, pct } from "../lib/format";
+import { ask } from "../lib/copilot";
 import { act, useStore } from "../lib/store";
 import type { Incident } from "../lib/types";
 
@@ -154,6 +155,7 @@ export function Incidents({ limit = 8 }: { limit?: number }) {
                 <th className="text-right" title="declared dead → new routes installed">Reroute</th>
                 <th className="text-right" title="failure injected → first end-to-end echo on the new path">Recovery</th>
                 <th>Path change</th>
+                <th />
               </tr>
             </thead>
             <tbody>
@@ -174,6 +176,15 @@ export function Incidents({ limit = 8 }: { limit?: number }) {
                   <td className="text-ink-2">
                     {corePath(i.from_path)}
                     {i.to_path && <div className="text-ink">⇒ {corePath(i.to_path)}</div>}
+                  </td>
+                  <td className="text-right">
+                    <button
+                      className="btn btn-sm"
+                      title="Ask the copilot to write a post-mortem from the measured timings, events and diagnosis"
+                      onClick={() => ask(`Write a post-mortem of incident ${i.id} (${pairLabel(i.pair)}, ${i.cause ?? i.kind}).`)}
+                    >
+                      Post-mortem
+                    </button>
                   </td>
                 </tr>
               ))}

@@ -12,12 +12,13 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from ..chaos import ChaosError
 from ..config import Settings
-from ..routing.graph import core_hops
+from ..journey import NoPathError, packet_journey
 from ..runtime import Runtime, sanitize
 
 log = logging.getLogger(__name__)
@@ -79,6 +80,12 @@ class ValidationReq(BaseModel):
 
 class NameReq(BaseModel):
     name: str
+
+
+class ChatReq(BaseModel):
+    message: str = Field(min_length=1, max_length=4000)
+    conversation_id: str | None = None
+    context: str | None = Field(default=None, max_length=600)
 
 
 # ---------------------------------------------------------------------------- app
@@ -250,55 +257,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return rt().controller.weights.to_dict()
 
     # ------------------------------------------------------------------ packet journey
-    def _journey(r: Runtime, src: str, dst: str) -> dict:
-        topo, plan = r.topo, r.plan
-        if src not in plan.host_ip or dst not in plan.host_ip or src == dst:
-            raise HTTPException(400, "src and dst must be two different hosts")
-        pair, rev = f"{src}>{dst}", f"{dst}>{src}"
-        if pair in r.controller.flows:
-            path, table, source = r.controller.flows[pair].path, r.installer.tables[pair][0], "policy table (forward)"
-        elif rev in r.controller.flows:
-            fp = r.controller.flows[rev].path
-            path, table, source = (list(reversed(fp)) if fp else None), r.installer.tables[rev][1], "policy table (reverse)"
-        else:
-            from ..routing.dijkstra import shortest_path
-            dead = {l for l, a in r.controller.link_alive.items() if not a}
-            _, path = shortest_path(r.controller.g, src, dst, lambda u, v, d: None if d["link_id"] in dead else d["delay_ms"])
-            table, source = "main", "main table (shortest path)"
-        if not path:
-            raise HTTPException(409, "no path currently installed")
-        now = time.time()
-        src_ip, dst_ip = plan.host_ip[src], plan.host_ip[dst]
-        hops = []
-        for i, node in enumerate(path):
-            n = topo.nodes[node]
-            hop: dict[str, Any] = {"node": node, "type": n.type, "label": n.label}
-            if i > 0:
-                l_in = topo.link_between(path[i - 1], node)
-                hop["in"] = {"link": l_in.id, "intf": plan.intf(l_in.id, node).name, "ip": plan.intf(l_in.id, node).ip}
-            if i < len(path) - 1:
-                l_out = topo.link_between(node, path[i + 1])
-                v = r.telemetry.link_view(l_out.id, now)
-                d = v["ab"] if l_out.a == node else v["ba"]
-                hop["out"] = {
-                    "link": l_out.id, "intf": plan.intf(l_out.id, node).name, "ip": plan.intf(l_out.id, node).ip,
-                    "health": v["health"], "rtt_ms": v["rtt_ms"], "loss_pct": v["loss_pct"],
-                    "util": d["util"], "bps": d["bps"], "pps": d["pps"], "drops_ps": d["drops_ps"],
-                    "cfg": v["cfg"], "probe_span": v["probe_span"],
-                }
-            if n.type == "router" and "in" in hop:
-                res = r.net.node_run(node, ["ip", "route", "get", dst_ip, "from", src_ip, "iif", hop["in"]["intf"]], timeout=3)
-                hop["kernel_decision"] = (res.stdout or res.stderr).strip().splitlines()[0] if (res.stdout or res.stderr) else ""
-                hop["table_routes"] = r.installer.show_routes(node, table)
-            hops.append(hop)
-        core = [lid for _, _, lid in core_hops(topo, path)]
-        return {"src": src, "dst": dst, "src_ip": src_ip, "dst_ip": dst_ip, "path": path, "core_links": core,
-                "table": table, "route_source": source, "hops": hops, "t": now}
-
     @app.get("/api/journey")
     async def journey(src: str, dst: str):
         r = rt()
-        return sanitize(await asyncio.to_thread(_journey, r, src, dst))
+        try:
+            return sanitize(await asyncio.to_thread(packet_journey, r, src, dst))
+        except NoPathError as e:
+            raise HTTPException(409, str(e)) from e
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
 
     _TR_RE = re.compile(r"^\s*(\d+)\s+(.*)$")
 
@@ -415,6 +382,77 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/demo")
     def demo_status():
         return ext("demo").status()
+
+    # ------------------------------------------------------------------ AI: AIOps + copilot
+    @app.get("/api/ai/status")
+    def ai_status():
+        a = ext("ai")
+        return sanitize({"copilot": a.copilot.status(), "detector": a.detector.summary(), "evaluation": a.evaluation.status(),
+                         "tick_ms": round(a.tick_ms, 2)})
+
+    @app.post("/api/ai/copilot/refresh")
+    async def ai_copilot_refresh():
+        return sanitize(await asyncio.to_thread(ext("ai").copilot.refresh))
+
+    @app.get("/api/ai/insights")
+    def ai_insights():
+        return sanitize(ext("ai").insights())
+
+    @app.get("/api/ai/signals")
+    def ai_signals():
+        return sanitize(ext("ai").detector.signal_table())
+
+    @app.get("/api/ai/signal")
+    def ai_signal(id: str, seconds: int = 300):
+        return sanitize(guard(ext("ai").detector.history, id, seconds))
+
+    @app.post("/api/ai/relearn")
+    def ai_relearn():
+        return ext("ai").relearn()
+
+    @app.post("/api/ai/chat")
+    def ai_chat(req: ChatReq):
+        copilot = ext("ai").copilot
+
+        def stream():
+            for ev in copilot.chat(req.conversation_id, req.message, req.context):
+                yield "data: " + json.dumps(sanitize(ev), default=str) + "\n\n"
+
+        return StreamingResponse(stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+    @app.post("/api/ai/chat/cancel")
+    def ai_chat_cancel():
+        return {"cancelled": ext("ai").copilot.cancel()}
+
+    @app.delete("/api/ai/conversations/{cid}")
+    def ai_conversation_reset(cid: str):
+        ext("ai").copilot.reset(cid)
+        return {"ok": True}
+
+    @app.post("/api/ai/proposals/{pid}/apply")
+    async def ai_proposal_apply(pid: str):
+        return sanitize(await asyncio.to_thread(guard, ext("ai").copilot.apply_proposal, pid))
+
+    @app.post("/api/ai/proposals/{pid}/dismiss")
+    def ai_proposal_dismiss(pid: str):
+        return guard(ext("ai").copilot.dismiss_proposal, pid)
+
+    @app.post("/api/ai/proposals/{pid}/predict")
+    async def ai_proposal_predict(pid: str):
+        return sanitize(await asyncio.to_thread(guard, ext("ai").copilot.predict_proposal, pid))
+
+    @app.post("/api/ai/evaluate")
+    def ai_evaluate():
+        return guard(ext("ai").evaluation.start)
+
+    @app.post("/api/ai/evaluate/cancel")
+    def ai_evaluate_cancel():
+        ext("ai").evaluation.stop()
+        return {"ok": True}
+
+    @app.get("/api/ai/evaluations")
+    def ai_evaluations():
+        return ext("ai").evaluation.list_runs()
 
     # ------------------------------------------------------------------ static UI
     if settings.frontend_dist.is_dir():

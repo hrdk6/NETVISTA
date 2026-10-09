@@ -7,3 +7,5 @@ __pycache__/
 runs/
 *.log
 .DS_Store
+.env
+*.tsbuildinfo

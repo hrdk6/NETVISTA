@@ -2,8 +2,10 @@ import { useState } from "react";
 import { api } from "../lib/api";
 import { STATUS, STATUS_LABEL } from "../lib/colors";
 import { bps, frac, mbps, ms, num, pct } from "../lib/format";
+import { ask } from "../lib/copilot";
 import { act, useStore } from "../lib/store";
 import type { Health, LinkView, NodeView } from "../lib/types";
+import { Spark as AISpark } from "./Copilot";
 import Spark from "./Spark";
 
 export function HealthBadge({ h }: { h: Health }) {
@@ -48,6 +50,7 @@ function LinkInspector({ l }: { l: LinkView }) {
         </div>
         <HealthBadge h={l.health} />
       </div>
+      <AskAbout prompt={`How is link ${l.id} doing compared with its normal behaviour, and which flows depend on it?`} />
       <div className="mt-3 grid grid-cols-2 gap-x-5 gap-y-2">
         <Spark label="Utilisation" data={series.map((p) => ({ t: p.t, v: p.util * 100 }))} format={(v) => `${v.toFixed(1)}%`} domainMax={100} />
         <Spark label="Round-trip time" data={series.map((p) => ({ t: p.t, v: p.rtt }))} format={(v) => `${v.toFixed(1)} ms`} />
@@ -84,7 +87,7 @@ function LinkInspector({ l }: { l: LinkView }) {
           ).map(([name, d]) => (
             <tr key={name}>
               <td className="text-ink-2">{name}</td>
-              <td className="text-right">{bps(d.bps)}</td>
+              <td className="text-right whitespace-nowrap">{bps(d.bps)}</td>
               <td className="text-right">{d.pps.toFixed(0)}</td>
               <td className="text-right">{frac(d.util, 1)}</td>
               <td className="text-right">{d.drops_ps.toFixed(1)}</td>
@@ -175,6 +178,13 @@ function NodeInspector({ n }: { n: NodeView }) {
         </div>
         <HealthBadge h={n.health} />
       </div>
+      <AskAbout
+        prompt={
+          n.type === "router"
+            ? `What does ${n.id} carry right now, and what would happen if it crashed?`
+            : `How is ${n.id} doing, and which paths does its traffic take?`
+        }
+      />
       <dl className="kv mt-3">
         <dt>Receiving</dt>
         <dd>{bps(n.rx_bps)}</dd>
@@ -246,5 +256,13 @@ function BurstForm({ src }: { src: string }) {
         Start burst
       </button>
     </div>
+  );
+}
+
+function AskAbout({ prompt }: { prompt: string }) {
+  return (
+    <button className="btn btn-sm mt-2.5" onClick={() => ask(prompt)} title={prompt}>
+      <AISpark size={11} /> Ask the copilot
+    </button>
   );
 }

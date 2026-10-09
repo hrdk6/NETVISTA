@@ -1,4 +1,5 @@
 """One-button demo: start traffic -> inject latency -> watch reroute -> kill a router -> recover.
+After each fault it also reports what the AI layer diagnosed from the probes alone.
 
 Targets are picked from the LIVE state at each step (the link the main flow is using right
 now, the router on its current path), so the demo always exercises a real change.
@@ -52,6 +53,18 @@ class DemoRunner:
         self._status["step_ends_at"] = time.time() + secs
         return not self._stop.wait(secs)
 
+    def _ai_note(self, injected: str) -> None:
+        """What the AI layer concluded from probes alone, next to what was really injected."""
+        ai = self.rt.extensions.get("ai")
+        causes = (ai.diagnosis.get("causes") or []) if ai else []
+        if not ai:
+            return
+        if causes:
+            c = causes[0]
+            self._say(f"AI diagnosis from probes only: {c['title']} ({c['confidence']} confidence); injected: {injected}", "success")
+        else:
+            self._say(f"AI diagnosis: no cause found yet; injected: {injected}", "warn")
+
     def _main_pair(self) -> str:
         t = self.rt.topo.traffic
         return f"{t[0].src}>{t[0].dst}" if t else next(iter(self.rt.controller.flows))
@@ -85,6 +98,7 @@ class DemoRunner:
                 self._say(f"Re-routed: {'–'.join(path)} ⇒ {'–'.join(new)}", "success")
             else:
                 self._say("No re-route (the alternative was not better by the hysteresis margin)", "warn")
+            self._ai_note(f"+80 ms on {link}")
 
             # 3. kill a router on the current path (not an edge router that owns a LAN)
             self._status["index"] = 2
@@ -96,6 +110,7 @@ class DemoRunner:
                 if not self._wait(10):
                     return
                 self._say(f"{pair.replace('>', '→')} now uses {'–'.join(ctrl.flows[pair].path)}", "success")
+                self._ai_note(f"router {victim} down")
             else:
                 self._say("No core router on the path to crash; skipping", "warn")
 

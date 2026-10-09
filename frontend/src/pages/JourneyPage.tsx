@@ -55,7 +55,7 @@ export default function JourneyPage() {
   };
 
   return (
-    <div className="grid min-h-full grid-cols-[minmax(0,1fr)_560px] gap-3 p-3">
+    <div className="grid min-h-full gap-3 p-3 xl:grid-cols-[minmax(0,1fr)_560px]">
       <div className="flex min-w-0 flex-col gap-3">
         <section className="panel flex flex-wrap items-center gap-3 px-4 py-3">
           <h1 className="panel-title mr-2">Packet journey</h1>

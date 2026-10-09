@@ -15,6 +15,9 @@ NETVISTA is a network *digital twin* with two halves that share one topology fil
 * **Twin**: a SimPy discrete-event model of the *same* topology, calibrated from the live
   measurements. You change things in the twin first, see the prediction, and then apply the
   same change live to check whether the twin was right (validation page).
+* **AI layer** over both: learned-baseline anomaly detection, root-cause analysis by probe-path
+  tomography, and an LLM copilot that answers from live data through tools and can only
+  *propose* changes (section 10).
 
 ```
  Browser (React + Cytoscape + Recharts)
@@ -31,6 +34,8 @@ NETVISTA is a network *digital twin* with two halves that share one topology fil
    |   simulator/   SimPy twin, calibration, what-if  -> separate process  |
    |   validation/  predict -> apply live -> measure -> compare            |
    |   scenarios/   record / replay / scripted demo                        |
+   |   ai/          anomaly detector + root cause (1 Hz), copilot (LLM),   |
+   |                evaluation against real faults                         |
    +-----------------------------------------------------------------------+
         |  nsenter -t <pid> -n ...   (one process per command, thread safe)
         v
@@ -338,34 +343,283 @@ exact. The validation page reports both. Probe-loss rows show the same effect ev
 strongly, so they are reported but excluded from the headline numbers. p95 errors (0.2–2.7 %)
 are dominated by WSL timer noise in the tail.
 
-## 10. Frontend
+## 10. AI layer (AIOps and copilot)
+
+Three parts work on the same live measurements as the rest of the dashboard. Each can be
+evaluated on its own. The first two need no language model and run all the time:
+
+```
+ probes + counters (1 Hz) --> signals.py --> anomaly.py ----------------+
+                                              learned baselines         |
+ probe paths + liveness  ----------------------------------------------> rca.py --> diagnosis
+                                                                         tomography   |
+ copilot/ (LLM)  <--- tools: live state, AI insights, twin, events <-----------------+
+      |
+      +--> propose_* --> a card in the UI --> the USER presses Apply --> chaos / routing / traffic
+```
+
+### 10.1 What the AI watches (`ai/signals.py`)
+
+47 signals on the default topology, one scalar per second each:
+
+| Signal | Source | Count |
+|---|---|---|
+| core link round trip, probe loss | `L:<link>` probe stream (router probes neighbour) | 2 × 7 |
+| link load = tx / shaped rate (both directions, max) | interface counters | 13 |
+| access segment round trip, probe loss | `G:<host>` stream (host probes gateway) | 2 × 4 |
+| flow round trip, probe loss | `F:<client>><server>` stream | 2 × 4 |
+| flow data loss | iperf3 receiver reports (only while traffic runs) | 4 |
+
+Round trip is the mean over 2 s. Probe loss is over 10 s, with the window shifted back by the
+2 s probe timeout: a lost probe is only known 2 s after it was sent, and is stamped with its
+send time, so an unshifted window would always under-count. The AI layer **never reads the
+chaos lab's fault list**. It sees what the network shows, so the evaluation can score it
+against the injected faults honestly. Capacity comes from the interface's shaped rate, the
+same thing SNMP's ifSpeed would report.
+
+### 10.2 Learned-baseline anomaly detection (`ai/anomaly.py`)
+
+The health colours use fixed rules: loss ≥ 1 %, load ≥ 85 %, RTT > 1.5 × design + 2 ms. A
+fixed rule has to be loose enough for every link at once. So it misses a link that is 4 ms
+slower than it has ever been, and it flaps on low, random loss: a single lost probe out of 50
+already reads 2 %. Instead, each signal learns its own normal, online and unsupervised:
+
+* **Model:** an exponentially weighted mean and variance (α = 0.05, about 20 s of memory). The
+  first 20 samples are a cumulative average (warm-up).
+* **Score:** z = (value − mean) / scale, with scale = max(std, floor, rel_floor × |mean|). The
+  floors exist because emulated links are almost perfectly flat (std ≈ 0.02 ms). Without them,
+  0.1 ms of WSL timer jitter would score z = 5. Floors used: RTT 0.3 ms or 5 % (flows 0.5 ms or
+  6 %), probe loss 0.4 pp (flows 0.5 pp), iperf3 data loss 0.25 pp (about 625 datagrams/s per
+  flow, so it is far less noisy than 10 probes/s), load 0.05 or 10 %.
+* **Direction:** only increases count for RTT and loss. Load only counts when it is both unusual
+  and above 70 % of capacity. An operator starting traffic is a change, not a fault.
+* **Hysteresis:** a signal is raised when z ≥ 4 for 3 consecutive seconds, or z ≥ 8 for 2. It
+  clears after 5 seconds below z = 2.
+* **No learning from anomalies:** the baseline is frozen while a signal is anomalous, so a fault
+  never becomes "normal". **Re-learn** (AI ops page) resets everything after a deliberate,
+  permanent change.
+
+### 10.3 Root-cause analysis by probe-path tomography (`ai/rca.py`)
+
+Every probe stream crosses a known set of elements. `L:r2-r5` crosses {r2, r2-r5, r5}.
+`G:c1` crosses {c1-sw1, sw1, sw1-r1, r1}. `F:c1>srv1` crosses everything on the flow's
+installed path. A broken element makes every stream through it bad, and leaves every stream
+that avoids it alone. This is Boolean network tomography:
+
+1. **Observations.** Each stream is bad, good or unknown per symptom: dead (probe liveness),
+   latency (detector), loss (detector), plus congestion for links at ≥ 85 % load. "Good" means
+   clearly normal (z < 1). A stream that is merely below the alarm line neither accuses nor
+   clears anything.
+2. **Candidates** are the elements crossed by some bad observation. For each candidate,
+   *explains* is the set of bad observations through it, and *contradicts* is the set of
+   clearly good observations of the same symptom through it.
+3. **Greedy cover.** Repeatedly pick the element with the most newly explained observations
+   minus its contradictions. One crashed router (4 dead streams, no contradictions) beats four
+   separate link failures. A single dead link beats its routers, because their other links
+   still echo. Two simultaneous failures come out as two causes.
+4. **Classify.** Dead → link or node down. A loaded link → congestion, or a traffic surge when a
+   burst flow crosses it. Otherwise loss → packet loss, or latency → added delay.
+5. **Confidence.** High when nothing contradicts it and it is backed by two observations or a
+   direct probe. Medium when the probes cannot separate it from another element (for example
+   sw1 vs its uplink sw1-r1); the alternatives are listed. Low when something contradicts it.
+
+**Live finding (changed the design).** The first version blamed r1-r2 for a fault on r2-r5.
+The adaptive controller moves the flows off r2-r5 in about 1.3 s, before the detector fires.
+The flows' RTT is then up because the new path is longer, and every element on the new path
+looked guilty. The fix tracks the path each flow's baseline was learned on. A new path becomes
+the baseline only after the flow has stayed on it for 30 s with clearly normal RTT. A z-score
+test alone raced: for one tick after the switch, the 2 s RTT window mixes old and new samples
+and looks normal. A rerouted flow's higher RTT is now reported as a side effect, not a fault.
+Its recent loss may be explained by elements of its old path, but its liveness may not, since
+liveness is about now. Both cases are regression tests in `tests/test_ai.py`.
+
+**Two more, found by the evaluation (10.4).**
+* *Lucky loss-free streams.* With 1 % loss on r2-r5, some flows over it saw zero lost probes in
+  their 10 s window and "cleared" the link, so no cause was found. But zero losses in 100
+  probes is still 13 % likely at 2 % round-trip loss. Loss is random; latency is not. A clean
+  stream now contradicts a loss hypothesis only when the loss seen on the bad streams is ≥ 5 %,
+  where zero losses would be implausible (0.95¹⁰⁰ < 1 %). Below that, clean streams only break
+  ties, so r2-r5 still beats r2 and r5, whose other links are clean.
+* *Bufferbloat is not a cut.* A 28.5 Mbit/s surge into the 30 Mbit/s r2-r5 link (6 Mbit/s
+  already on it) fills its 1000-packet queue. The RTT rises from 10 to 334 ms, and tail drop
+  silences the probes for more than 1.2 s at a time, so the diagnosis flipped to "link down".
+  But the counters show the link sending at 100 % of its rate, so it cannot be down. A
+  silent link that is loaded at ≥ 85 % is now classified as congestion, or as a surge when a
+  burst crosses it.
+
+### 10.4 Evaluation against real faults (`ai/evaluation.py`)
+
+**Protocol.** Everything runs on the live network, with the default traffic running and static
+routing, so a fault stays on the flows' path.
+
+1. Re-learn the baselines for 30 s.
+2. A quiet minute with no faults: every anomaly raised there is a false alarm, and so is every
+   ok → degraded flip of a health colour.
+3. Each of 8 faults goes in through the chaos lab, and the system is polled every 0.5 s for up
+   to 25 s. Three things are timed or scored:
+   * **Learned detector:** when the first new anomaly is *raised*. This is the alarm time, not
+     the onset; an earlier version of this scorer used the onset and flattered the detector by
+     about 2 s.
+   * **Threshold rules:** when a link on the fault's path first turns degraded or down.
+   * **Diagnosis:** the top cause 4 s after the first alarm, which must name the injected
+     element *and* the right fault class.
+4. Revert, and wait until every anomaly has cleared.
+
+The diagnosis never sees the fault list; only the scorer does. One run takes about 5 minutes.
+
+**Results** (run 1 of 2, both after the fixes in 10.3; target link r2-r5, the 30 Mbit/s
+bottleneck of c1 → srv1):
+
+| Injected fault | Learned detector | Threshold rules | Diagnosis 4 s after first alarm |
+|---|---|---|---|
+| +2 ms latency (subtle) | 3.8 s | **missed** (RTT 14 ms < 17.4 ms rule) | Link r2-r5 has extra latency ✓ |
+| +25 ms latency | 1.8 s | 0.5 s | Link r2-r5 has extra latency ✓ |
+| 1 % loss (subtle) | 5.4 s (iperf3 data loss) | 4.5 s, then flipped twice | Link r2-r5 is dropping packets ✓ |
+| 10 % loss | 1.9 s | 2.5 s | Link r2-r5 is dropping packets ✓ |
+| capacity cap 4 Mbit/s (overload) | 1.0 s | 0.5 s | Link r2-r5 is congested ✓ |
+| 28.5 Mbit/s surge c2 → srv1 | 1.7 s | 0.8 s | Traffic surge from c2 → srv1 is congesting r2-r5 ✓ |
+| link r2-r5 down | 4.1 s | 1.5 s | Link r2-r5 is down ✓ |
+| router r2 down | 3.7 s | 1.5 s | Router r2 is down ✓ |
+
+| | Learned detector | Threshold rules |
+|---|---|---|
+| faults detected | **8 / 8** | 7 / 8 |
+| subtle faults detected | **2 / 2** | 1 / 2 |
+| mean time to detect | 2.9 s | **1.7 s** |
+| false alarms in the quiet minute | 0 | 0 |
+| health-colour flips while a fault was on | n/a (hysteresis: raise after 2–3 s, clear after 5 s) | 10 |
+
+Root cause: **8 / 8 correct** (element and fault class), all at high confidence.
+
+**Run 2** (same protocol, after a restart) reproduced it:
+* learned detector 8 / 8 (mean 3.1 s), threshold rules 7 / 8 (mean 1.6 s, again missing the
+  +2 ms);
+* subtle faults 2 / 2 against 1 / 2;
+* diagnosis 8 / 8 correct;
+* 0 false alarms for either method.
+
+Its surge diagnosis was right but at *low* confidence: the probes that got through the full
+queue counted as evidence against the ones that did not. Liveness no longer contradicts a
+congested link (regression test
+`test_rca_congested_link_keeps_confidence_when_some_probes_survive`). Run 2's 1 % loss
+diagnosis was *medium*: early on, only the flows' iperf3 data loss was bad, and that cannot
+separate r2-r5 from the other links on the path.
+
+**Reading it honestly:**
+* The learned detector catches what the rules cannot (+2 ms), and its hysteresis keeps it from flapping. It is *slower*
+  on hard faults, because it insists on 2–3 consecutive 1 Hz samples, and probe loss is only
+  known after the 2 s probe timeout. That is the price of zero false alarms.
+* Hard failures are not slowed down by this: the diagnosis uses probe liveness (1.2 s dead
+  interval) directly, so "Link r2-r5 is down" was correct 2.5 s after the cut.
+* The 1 % loss is found through the iperf3 receivers, not the probes. At 10 probes/s, about
+  2 % round-trip probe loss is roughly two lost probes in a 10 s window, indistinguishable from
+  luck for many seconds. Without traffic across the link, it would take much longer.
+* One topology, one target link, one load level. The table shows the method works on this
+  network; it is not a general benchmark.
+
+### 10.5 Copilot (`ai/copilot/`)
+
+A tool-using LLM agent: the model asks for tools, the backend runs them, the results go back
+to the model, and the loop repeats (at most 8 rounds). The answer streams to the browser as
+server-sent events.
+
+* **Providers** (`providers.py`). Claude through the Anthropic SDK (default `claude-opus-5-5`,
+  set with `NETVISTA_AI_MODEL`), with prompt caching on the static system prompt and tools. Or a
+  local model through Ollama's native `/api/chat` with `think: false` and a 12k context. It is
+  picked automatically: `ANTHROPIC_API_KEY` if set, otherwise the first tool-capable model of a
+  running Ollama. Under WSL2 NAT networking, Windows' 127.0.0.1 is unreachable from the
+  backend. So when plain HTTP fails, requests go through Windows' own `curl.exe` via WSL
+  interop (65 ms overhead), which needs no firewall rule or Ollama setting.
+* **Tools** (`tools.py`) come in three kinds, and the split is the safety model:
+  * *read* (10): network status, link/node/flow details, AI insights, incidents, events,
+    history, traceroute-style path, and twin/AI accuracy;
+  * *simulate* (1): `run_what_if` on the SimPy twin, labelled SIMULATION in its result;
+  * *propose* (4): fault, revert, routing, traffic.
+
+  A proposal is validated with the same `validate_change` the chaos lab uses, stored and shown
+  as a card. **The model has no tool that changes the network.** Only the user's Apply click
+  does, and the event log records "approved by the user". The card can also ask the twin to
+  predict the impact first. Local models get a smaller toolset of 9 to keep the prompt short.
+* **Grounding check** (`grounding.py`). After each answer, every measurement-like number (a
+  unit or a decimal point; bare counts, ids, IPs and clock times are skipped) is looked up in
+  the numbers of the tool results, the topology facts and the user's own messages. Unit
+  scaling (fraction ↔ %, ms ↔ s, bit/s → Mbit/s) is allowed, within the written precision or
+  0.5 %. The UI shows "N of M values traced to data" and underlines the rest. In the live test
+  below, the model wrote "over 90 seconds" for a fault the data said was 94.2 s old; that was
+  the one value flagged.
+* **Context.** Each question carries what the user is looking at (page, selection). Tool
+  results older than the last turn (local) or last 3 turns (Claude) are replaced by a stub, so
+  long conversations stay within the context. Tool outputs are compact JSON with nulls dropped.
+* **Measured** (local `gemma4:12b`, CPU only, 7 GB RAM WSL): "explain the r2-down diagnosis"
+  took 303 s. It made 2 tool calls, gave a correct explanation (cause, evidence, the
+  controller's reroute to r1-r3-r4-r5, next steps), and 5 of 6 values traced to data. Claude
+  was not measured: the development machine has no API key. The provider code path is covered
+  by unit tests with a scripted provider.
+
+## 11. Frontend
 
 * **No fake data.** Every value on the live pages comes from the WebSocket snapshot. The twin's
   view is labelled "Simulation" with a dashed border. Nothing in the UI is mocked, so there is
   no MOCK label anywhere.
-* **Packet dots:** the dot *rate* is the measured packets/s of each link direction (interface
-  counters), scaled so the busiest direction shows about 14 dots/s. The legend shows "1 dot ≈ N
-  packets". A dot's *colour* is attributed to the flows whose installed path crosses that hop,
-  in proportion to their known offered rates. Anything beyond that (probes, control traffic) is
-  grey.
+* **The map** (`components/TopologyView.tsx`, `components/devices.ts`) is built from four
+  layers:
+  1. a floor canvas with a dot-grid plan, site zones captioned with their subnets, cables and
+     flow fibres;
+  2. Cytoscape, for the equipment artwork plus pan, zoom and hit-testing (edges are invisible
+     hit areas);
+  3. an overlay canvas for LEDs, labels, health rings, cable breaks and the selection halo;
+  4. HTML for the hover card.
+
+  Packets travel *under* the equipment, so they visibly enter and leave each device. The
+  equipment follows network-diagram conventions: the router puck with its four-arrow emblem,
+  the switch, the server and the laptop. The art is static and never carries state; every
+  light on it is drawn from data.
+* **What moves, and what drives it:**
+
+  | Visual | Driven by |
+  |---|---|
+  | comet rate per cable direction | interface packets/s ("1 comet ≈ N packets" in the corner) |
+  | comet colour | the flows whose installed path crosses that hop, by their offered rates; the rest (probes, control traffic) is grey |
+  | comet travel time | measured link latency (slow links have slow comets) |
+  | activity LED blink rate | the node's measured packets/s |
+  | status LED, amber/red rings, cable break | probe-measured health |
+  | cable brightness/glow, thickness | measured utilisation, configured capacity |
+  | fibre draw-in / old route fade | a real path change from the controller (plus once at page load) |
+  | ripple / green sweep | a link or node going down / a cable coming back |
+  | dotted marker with a spark on a cable | the learned-baseline detector finds one of its signals unusual (one ring at onset) |
+  | "Likely cause" tag pinned to a link or router | the top root cause of the probe-path diagnosis |
+
+  Under `prefers-reduced-motion` the comets, pulses and draw-ins are off and the LEDs hold
+  steady. Probe-only pairs are hidden unless their legend chip is hovered.
 * **Colour system:** hue is reserved for meaning. Status uses green/amber/red, always with an
   icon and a label. Flow identity uses TIA-598 fibre colours (#1 blue, #12 aqua, #10 violet, #4
   brown), validated with a CVD checker on the dark surface. They sit in the 6–8 ΔE warn band, so
   each flow also has a dash pattern and a direct label. Link load uses a neutral brightness and
   width ramp, so it never competes with status hues.
+* **Provenance has one border language:** solid = measured live, dashed = simulation, dotted =
+  written or inferred by the AI layer (AI insights, the AI answer tag, map markers).
+* **Copilot drawer** (`components/Copilot.tsx`, `lib/copilot.ts`, Ctrl+K). It streams the answer
+  over SSE, with each tool call as a row whose raw JSON opens on click. Proposals are cards
+  with *Apply*, *Predict impact first* and *Dismiss*. The answer is rendered by a small
+  Markdown subset (React elements only, no HTML injection), and values the grounding check did
+  not find are underlined.
 * Fonts (Barlow) are bundled locally, so the demo works offline.
 
-## 11. Concurrency model
+## 12. Concurrency model
 
 * asyncio (FastAPI) serves HTTP and pushes one snapshot every 0.5 s to all WebSocket clients.
 * Daemon threads: one reader per probe agent, counters (2 Hz), tc stats (1 Hz), routing
   controller (10 Hz), history sampler (1 Hz), traffic watcher, and the validation/demo/replay
   jobs.
 * The twin runs in a separate process.
+* The AI layer adds one thread (1 Hz: sample 47 signals, update the detector, run the
+  diagnosis; about 1 ms per tick). One copilot worker thread per question streams events
+  through a queue to a synchronous SSE generator, which Starlette runs in its threadpool. Only
+  one question runs at a time.
 * Producers never touch asyncio. The broadcaster pulls events by sequence number from a
   thread-safe ring buffer.
 
-## 12. Tests
+## 13. Tests
 
 * `tests/test_routing_algorithms.py` – Dijkstra and Yen vs networkx on random graphs,
   determinism, dead-edge avoidance, the six default-topology paths
@@ -376,13 +630,19 @@ are dominated by WSL timer noise in the tail.
   twin fail-over / outage / latency-reroute prediction, calibration fit recovery
 * `tests/test_topology_and_parsers.py` – topology validation, addressing, tc/iperf/proc
   parsers, policy-route generation, change validation, validation error maths
+* `tests/test_ai.py` – detector (learn, raise, clear, frozen baseline, floors, load rule,
+  re-learn), root cause on synthetic probe worlds (link vs router, edge router, two failures,
+  ambiguous switch, latency/loss localisation, congestion and surge, reroute side effects,
+  fast reroute, lucky loss-free streams, full-queue silence), grounding (extraction, unit
+  scaling, JSON strings), provider message formats, context trimming, and the agent loop with
+  a scripted model (tool round, grounding, proposals need the user, one approval = one action)
 * `tests/test_smoke_emulation.py` (root only) – boots real Mininet: netem delay is really
   applied, a latency change moves the measured RTT, policy-route fail-over, traceroute goes
   through the expected router, the OVS-based default topology passes traffic
 * `scripts/live_check.py` – end-to-end acceptance test against the running system
 * `scripts/twin_check.py --suite` – calibration plus the full validation suite
 
-## 13. Known limitations (honest list)
+## 14. Known limitations (honest list)
 
 1. **Scale:** designed for tens of nodes. Every probe stream is a Python thread reading a
    pipe, and the twin is packet-level (about 1 s of compute per simulated 10 s at 12 Mbit/s).
@@ -400,10 +660,23 @@ are dominated by WSL timer noise in the tail.
 7. **UDP CBR traffic only.** TCP congestion control is not modelled.
 8. **WSL timing:** RTTs include WSL's virtualised timer behaviour. Calibration absorbs the
    mean, but jitter on a busy laptop can be higher than on bare metal.
-9. **Optional extensions not built:** eBPF/XDP telemetry, the LLM "explain this router" panel
-   and the drag-and-drop topology editor (left out by design, to keep the core solid).
+9. **Optional extensions not built:** eBPF/XDP telemetry and the drag-and-drop topology
+   editor (left out by design, to keep the core solid).
+10. **AI detection is bounded by the probe rate.** 10 probes/s means about 1 % random loss
+    needs many seconds to separate from chance. The iperf3 receivers (about 625 packets/s per
+    flow) catch it faster, but only on links that carry traffic.
+11. **The diagnosis assumes one element per symptom set.** It is greedy, not exhaustive. Two
+    faults on the same path can be reported as one, and a switch cannot be told apart from its
+    uplink (both are listed).
+12. **The copilot is only as fast and as careful as its model.** A CPU-only local model takes
+    minutes. The grounding check catches invented or rounded measurements, but not a wrong
+    conclusion drawn from correct numbers. That is why the model can only propose, never act.
+13. **Measurement-plane stalls look like silence.** Probe replies are stamped when the backend
+    reads them. If the host is starved for more than the dead interval (seen once while
+    hammering the API), several unrelated streams look dead together. The diagnosis then names
+    them as separate causes, which is at least visibly odd.
 
-## 14. Likely viva questions
+## 15. Likely viva questions
 
 * *Why not OpenFlow/SDN?* Linux routers plus policy routes are native, inspectable (`ip route`,
   `traceroute`) and need no unmaintained controller. OVS is still used, for L2.
@@ -416,6 +689,16 @@ are dominated by WSL timer noise in the tail.
   streams of different lengths to separate the two terms.
 * *Why relative error for latency but absolute for loss?* Relative error explodes when the true
   value is ~0.
+* *Is the "AI" just an LLM guessing?* No. Detection and diagnosis are deterministic,
+  explainable algorithms (online statistics, Boolean tomography), scored against injected
+  faults in section 10.4. The LLM only explains and proposes. Its numbers are checked against
+  the data it read, and it has no tool that can change the network.
+* *Why unsupervised baselines and not a trained classifier?* There is no labelled fault data
+  for this network. Training on chaos-lab faults would teach the model the fault list we then
+  evaluate on. Per-signal baselines need no labels and adapt to any topology file.
+* *How do you stop hallucinated numbers?* Rule 1 of the system prompt, plus a post-hoc check:
+  every number with a unit in the answer must match a number in the tool results, within the
+  written precision. The UI shows the count and underlines the misses.
 * *What surprised you?* Four things changed the design: HTB root changes failing, the token
   bucket, phase-locked CBR sources, and black-hole attraction during detection. Each is
   documented above, with the measurement that revealed it.

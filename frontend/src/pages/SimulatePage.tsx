@@ -5,6 +5,7 @@ import TopologyView, { FlowLegend, type LinkVis, type StrandVis } from "../compo
 import { api } from "../lib/api";
 import { flowStyle } from "../lib/colors";
 import { ago, corePath, mbps, ms, pairLabel, pct } from "../lib/format";
+import { ask } from "../lib/copilot";
 import { act, useStore } from "../lib/store";
 import type { Calibration, Change, Health, Prediction, SimResult } from "../lib/types";
 
@@ -76,7 +77,7 @@ export default function SimulatePage() {
   };
 
   return (
-    <div className="grid min-h-full grid-cols-[380px_minmax(0,1fr)] gap-3 p-3">
+    <div className="grid min-h-full gap-3 p-3 xl:grid-cols-[380px_minmax(0,1fr)]">
       <aside className="flex flex-col gap-3">
         <section className="panel p-4">
           <div className="flex items-center justify-between">
@@ -139,7 +140,7 @@ export default function SimulatePage() {
       </aside>
 
       <div className="flex min-w-0 flex-col gap-3">
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid gap-3 lg:grid-cols-2">
           <section className="panel flex h-[400px] flex-col">
             <div className="flex items-center justify-between border-b border-line px-4 py-2">
               <span className="live-tag">Live, measured now</span>
@@ -150,7 +151,17 @@ export default function SimulatePage() {
           <section className="panel flex h-[400px] flex-col border-dashed border-sim/50 bg-[#1d2a38]">
             <div className="flex items-center justify-between border-b border-dashed border-sim/40 px-4 py-2">
               <span className="sim-tag">Simulation: {pred ? pred.label : "no prediction yet"}</span>
-              {pred && <span className="hint">{pred.mode} routing, {pred.duration_s} s simulated in {pred.wall_s.toFixed(1)} s</span>}
+              {pred && (
+                <span className="flex items-center gap-3">
+                  <span className="hint hidden md:inline">{pred.mode} routing, {pred.duration_s} s simulated in {pred.wall_s.toFixed(1)} s</span>
+                  <button
+                    className="btn btn-sm"
+                    onClick={() => ask(`Explain what the twin predicts for "${pred.label}" (${pred.mode} routing) compared with the network now, and whether I should worry.`)}
+                  >
+                    Explain
+                  </button>
+                </span>
+              )}
             </div>
             {sim ? (
               <TopologyView className="flex-1" topology={topology} pairs={pairs} links={sim.links} nodes={sim.nodes} strands={sim.strands} packets={false} variant="sim" />
@@ -161,7 +172,7 @@ export default function SimulatePage() {
         </div>
         <div className="flex justify-between px-1">
           <FlowLegend pairs={pairs} strands={live.strands} />
-          <span className="hint">Link brightness and width: utilisation. Dashed red: down. Amber ring: degraded.</span>
+          <span className="hint">Brighter cable: more load. Red break: link down. Amber ring: degraded.</span>
         </div>
         {pred && <Comparison pred={pred} pairs={pairs} />}
       </div>
@@ -234,7 +245,7 @@ function Comparison({ pred, pairs }: { pred: Prediction; pairs: string[] }) {
         <h2 className="panel-title">Live now vs twin forecast</h2>
         <span className="hint">“Twin, unchanged” checks the twin against the live network; “Twin, what-if” is the forecast for your changes.</span>
       </div>
-      <div className="mt-2 grid grid-cols-2 gap-x-6 gap-y-4 xl:grid-cols-2">
+      <div className="mt-2 grid gap-x-6 gap-y-4 lg:grid-cols-2">
         {pairs.map((p) => {
           const lv = pred.live.pairs[p];
           const base = pred.baseline?.pairs[p];

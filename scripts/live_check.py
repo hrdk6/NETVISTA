@@ -4,7 +4,7 @@
     python3 scripts/live_check.py [--url http://localhost:8000] [--quick]
 
 It drives the real emulated network through: traffic -> link failure -> router crash ->
-latency injection -> recovery, and prints the measured detection / reroute / recovery
+latency injection -> recovery -> a subtle fault for the AI layer, and prints the measured detection / reroute / recovery
 times. Exit code 0 = every check passed.
 """
 
@@ -151,6 +151,27 @@ def main() -> int:
     s = get("/api/state")
     check(s["flows"]["c1>srv1"]["probe"]["alive"] is True, "c1>srv1 back after repair (routes re-asserted by reconcile)")
     post("/api/routing/mode", {"mode": "adaptive"})
+
+    print("7. AI layer: learned baselines + root-cause analysis")
+    st = get("/api/ai/status")
+    det = st["detector"]
+    check(det["normal"] + det["anomalous"] >= det["signals"] - 6, f"detector has learned {det['normal']} of {det['signals']} signals")
+    t_end = time.time() + 40
+    while time.time() < t_end and (get("/api/ai/insights")["anomalies"] or get("/api/ai/insights")["diagnosis"]["causes"]):
+        time.sleep(2)  # let the previous steps' anomalies clear
+    check(not get("/api/ai/insights")["diagnosis"]["causes"], "no diagnosis while the network is healthy")
+    # +2 ms each way: below the threshold rule (1.5 x design + 2 ms), well above the learned spread
+    inj = post("/api/chaos/inject", {"kind": "link_latency", "target": "r2-r5", "params": {"add_ms": 2}})
+    t0, found, health = time.time(), None, None
+    while time.time() - t0 < 15 and not found:
+        time.sleep(0.5)
+        ins = get("/api/ai/insights")
+        found = next((c for c in ins["diagnosis"]["causes"] if c["element"] == "r2-r5"), None)
+    health = get("/api/state")["links"]["r2-r5"]["health"]
+    check(found is not None and found["type"] == "latency",
+          f"subtle +2 ms on r2-r5 diagnosed as '{found and found['title']}' after {time.time() - t0:.1f} s (threshold health says '{health}')")
+    post(f"/api/chaos/revert/{inj['id']}")
+    print(f"     copilot: {st['copilot']['label']}" + ("" if st["copilot"]["available"] else f" ({st['copilot']['reason']})"))
 
     print()
     print("ALL CHECKS PASSED" if not FAILS else f"{len(FAILS)} CHECK(S) FAILED")

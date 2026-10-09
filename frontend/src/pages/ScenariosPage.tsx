@@ -29,7 +29,7 @@ export default function ScenariosPage() {
   useEffect(load, [rec?.recording, rep?.running]);
 
   return (
-    <div className="mx-auto grid max-w-[1500px] grid-cols-[440px_minmax(0,1fr)] gap-3 p-3">
+    <div className="mx-auto grid max-w-[1500px] gap-3 p-3 lg:grid-cols-[440px_minmax(0,1fr)]">
       <div className="flex flex-col gap-3">
         <section className="panel p-4">
           <h1 className="panel-title">Demo script</h1>

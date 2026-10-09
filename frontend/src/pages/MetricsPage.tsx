@@ -75,7 +75,7 @@ export default function MetricsPage() {
         </div>
       </section>
 
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {pairs.map((p) => {
           const f = last?.flows[p];
           const st = flowStyle(pairs, p);
@@ -101,7 +101,7 @@ export default function MetricsPage() {
       </div>
 
       <ChartPanel title="Throughput received (iperf3)" unit="Mbit/s" rows={rows} keys={activePairs.map((p) => ({ key: `${p}|rx`, pair: p }))} pairs={pairs} empty="Start traffic on the Live page to see throughput." />
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid gap-3 lg:grid-cols-2">
         <ChartPanel title="Data loss (iperf3)" unit="%" rows={rows} keys={activePairs.map((p) => ({ key: `${p}|loss`, pair: p }))} pairs={pairs} empty="No traffic yet." />
         <ChartPanel title="Probe loss (end-to-end)" unit="%" rows={rows} keys={pairs.map((p) => ({ key: `${p}|ploss`, pair: p }))} pairs={pairs} />
       </div>

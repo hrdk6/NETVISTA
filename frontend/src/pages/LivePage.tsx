@@ -1,10 +1,11 @@
 import { useState } from "react";
+import AIInsights from "../components/AIInsights";
 import EventLog from "../components/EventLog";
 import ActiveFaults from "../components/Faults";
 import Inspector from "../components/Inspector";
 import { useLiveVis } from "../components/liveVis";
 import { Incidents, PathSelection, RoutingPolicy } from "../components/RoutingPanels";
-import TopologyView, { FlowLegend } from "../components/TopologyView";
+import TopologyView, { FlowLegend, MapLegend } from "../components/TopologyView";
 import { api } from "../lib/api";
 import { flowStyle } from "../lib/colors";
 import { corePath, mbps, ms, pairLabel, pct } from "../lib/format";
@@ -17,34 +18,39 @@ export default function LivePage() {
   const selected = useStore((s) => s.selected);
   const select = useStore((s) => s.select);
   const [colorMode, setColorMode] = useState<"load" | "latency">("load");
+  const [focus, setFocus] = useState<string | null>(null);
   const vis = useLiveVis(snap);
   const background = snap.traffic.filter((f) => f.kind === "background" && f.state === "running");
 
   return (
-    <div className="grid h-full min-h-[820px] grid-cols-[minmax(0,1fr)_400px] grid-rows-[minmax(0,1fr)_340px] gap-3 p-3">
-      <section className="panel relative flex min-h-0 flex-col">
-        <div className="flex flex-wrap items-center gap-3 border-b border-line px-4 py-2.5">
-          <h1 className="panel-title mr-2">Live emulated network</h1>
-          {background.length ? (
-            <button className="btn btn-sm" onClick={() => act(() => api.post("/api/traffic/stop", {}))}>
-              Stop traffic
-            </button>
-          ) : (
-            <button className="btn btn-sm btn-primary" onClick={() => act(() => api.post("/api/traffic/start", {}), "iperf3 flows started")}>
-              Start traffic
-            </button>
-          )}
-          <div className="seg" role="group" aria-label="Link colouring">
-            <button aria-pressed={colorMode === "load"} onClick={() => setColorMode("load")}>
-              Load
-            </button>
-            <button aria-pressed={colorMode === "latency"} onClick={() => setColorMode("latency")}>
-              Latency
-            </button>
+    <div className="flex flex-col gap-3 p-3">
+      {/* first screen: the map is the hero, the controls sit beside it */}
+      <div className="grid gap-3 xl:h-[calc(100vh-80px)] xl:min-h-[640px] xl:grid-cols-[minmax(0,1fr)_400px]">
+      <section className="panel relative flex h-[72vh] min-h-[520px] flex-col overflow-hidden xl:h-auto xl:min-h-0">
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-b border-line px-4 py-2.5">
+          <div className="mr-1">
+            <h1 className="panel-title">Live emulated network</h1>
+            <MapSummary />
           </div>
-          <span className="hint">
-            {colorMode === "load" ? "Brighter, wider links carry more traffic (tx counters ÷ shaped capacity)." : "Brighter links are slower than designed (probe RTT vs designed RTT)."}
-          </span>
+          <div className="ml-auto flex items-center gap-2">
+            <div className="seg" role="group" aria-label="Cable colouring">
+              <button aria-pressed={colorMode === "load"} onClick={() => setColorMode("load")} title="Cable brightness shows tx counters divided by shaped capacity">
+                Load
+              </button>
+              <button aria-pressed={colorMode === "latency"} onClick={() => setColorMode("latency")} title="Cable glow shows how much slower than designed the probes measure">
+                Latency
+              </button>
+            </div>
+            {background.length ? (
+              <button className="btn btn-sm" onClick={() => act(() => api.post("/api/traffic/stop", {}))}>
+                Stop traffic
+              </button>
+            ) : (
+              <button className="btn btn-sm btn-primary" onClick={() => act(() => api.post("/api/traffic/start", {}), "iperf3 flows started")}>
+                Start traffic
+              </button>
+            )}
+          </div>
         </div>
         <TopologyView
           className="min-h-0 flex-1"
@@ -56,48 +62,35 @@ export default function LivePage() {
           colorMode={colorMode}
           selected={selected}
           onSelect={select}
+          focusPair={focus}
+          cause={vis.cause}
         />
-        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line px-4 py-2">
-          <FlowLegend pairs={pairs} strands={vis.strands} />
-          <StatusLegend />
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5 border-t border-line px-3 py-2">
+          <FlowLegend pairs={pairs} strands={vis.strands} focus={focus} onFocus={setFocus} />
+          <MapLegend />
         </div>
       </section>
 
-      <aside className="row-span-2 flex min-h-0 flex-col gap-3 overflow-auto pr-1">
+      <aside className="flex min-h-0 flex-col gap-3 xl:overflow-auto xl:pr-1">
         <DemoProgress />
+        <AIInsights />
         <Inspector />
         <ActiveFaults />
         <PathSelection />
         <RoutingPolicy />
       </aside>
+      </div>
 
-      <div className="grid min-h-0 grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)] gap-3">
-        <div className="flex min-h-0 flex-col gap-3">
+      {/* below the fold: per-flow numbers, failure timings, the event log */}
+      <div className="grid gap-3 lg:grid-cols-2 2xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)_minmax(0,1fr)]">
+        <div className="flex min-w-0 flex-col gap-3 lg:col-span-2 2xl:col-span-1">
           <FlowTable />
+        </div>
+        <div className="flex h-[380px] min-h-0 min-w-0 flex-col">
           <Incidents />
         </div>
-        <EventLog />
+        <EventLog className="h-[380px]" />
       </div>
-    </div>
-  );
-}
-
-function StatusLegend() {
-  const items = [
-    ["#0ca30c", "●", "healthy"],
-    ["#fab219", "▲", "degraded"],
-    ["#d03b3b", "✕", "down (dashed link)"],
-  ] as const;
-  return (
-    <div className="flex items-center gap-3 text-[12.5px] text-ink-3">
-      {items.map(([c, g, t]) => (
-        <span key={t} className="inline-flex items-center gap-1">
-          <span style={{ color: c }} aria-hidden="true">
-            {g}
-          </span>
-          {t}
-        </span>
-      ))}
     </div>
   );
 }
@@ -170,5 +163,25 @@ function DemoProgress() {
       </ol>
       {demo.notes && demo.notes.length > 0 && <p className="mt-2 border-t border-line pt-2 text-[13px] text-ink-2">{demo.notes[demo.notes.length - 1]}</p>}
     </section>
+  );
+}
+
+function MapSummary() {
+  const snap = useStore((s) => s.snap)!;
+  const nodes = Object.values(snap.nodes);
+  const healthy = nodes.filter((n) => n.health === "ok").length;
+  const flows = Object.values(snap.flows).filter((f) => f.offered_mbps > 0);
+  const offered = flows.reduce((s, f) => s + f.offered_mbps, 0);
+  const faults = snap.chaos.active.length;
+  return (
+    <p className="text-[12.5px] text-ink-3">
+      <span className={healthy === nodes.length ? "text-ink-2" : "text-[#fab219]"}>
+        {healthy} of {nodes.length} devices healthy
+      </span>
+      <span aria-hidden="true" className="mx-2 text-line-strong">|</span>
+      {flows.length ? `${flows.length} flows carrying ${offered.toFixed(1)} Mbit/s` : "no iperf3 traffic yet"}
+      <span aria-hidden="true" className="mx-2 text-line-strong">|</span>
+      <span className={faults ? "text-[#fab219]" : ""}>{faults ? `${faults} active ${faults === 1 ? "fault" : "faults"}` : "no faults injected"}</span>
+    </p>
   );
 }

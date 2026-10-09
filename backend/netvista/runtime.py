@@ -102,7 +102,7 @@ class Runtime:
 
     def stop(self) -> None:
         self._stop.set()
-        for name in ("demo", "replayer", "validation"):
+        for name in ("demo", "replayer", "validation", "ai"):
             ext = self.extensions.get(name)
             if ext and hasattr(ext, "stop"):
                 try:
@@ -157,6 +157,8 @@ class Runtime:
         for name, ext in self.extensions.items():
             if hasattr(ext, "status"):
                 snap.setdefault("jobs", {})[name] = ext.status()
+            if hasattr(ext, "snapshot_view"):
+                snap[name] = ext.snapshot_view()
         return sanitize(snap)
 
     def history_sample(self, now: float) -> dict:
