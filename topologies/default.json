@@ -1,0 +1,36 @@
+{
+  "name": "netvista-default",
+  "description": "Two sites joined by a 5-router core with redundant paths. Site A (clients) hangs off r1 via OVS switch sw1, site B (servers) off r5 via OVS switch sw2. The short top path r1-r2-r5 has a 30 Mbit/s bottleneck on r2-r5, so it is the first to congest.",
+  "nodes": [
+    { "id": "c1",   "type": "client", "label": "Client 1", "x": 40,   "y": 110 },
+    { "id": "c2",   "type": "client", "label": "Client 2", "x": 40,   "y": 340 },
+    { "id": "sw1",  "type": "switch", "label": "Site A switch", "x": 170, "y": 225 },
+    { "id": "r1",   "type": "router", "label": "R1 (edge A)", "x": 310, "y": 225 },
+    { "id": "r2",   "type": "router", "label": "R2", "x": 480, "y": 70 },
+    { "id": "r3",   "type": "router", "label": "R3", "x": 480, "y": 380 },
+    { "id": "r4",   "type": "router", "label": "R4", "x": 600, "y": 225 },
+    { "id": "r5",   "type": "router", "label": "R5 (edge B)", "x": 780, "y": 225 },
+    { "id": "sw2",  "type": "switch", "label": "Site B switch", "x": 910, "y": 225 },
+    { "id": "srv1", "type": "server", "label": "Server 1", "x": 1040, "y": 110 },
+    { "id": "srv2", "type": "server", "label": "Server 2", "x": 1040, "y": 340 }
+  ],
+  "links": [
+    { "a": "c1",  "b": "sw1",  "bw_mbps": 100, "delay_ms": 0.5 },
+    { "a": "c2",  "b": "sw1",  "bw_mbps": 100, "delay_ms": 0.5 },
+    { "a": "sw1", "b": "r1",   "bw_mbps": 100, "delay_ms": 0.5 },
+    { "a": "r1",  "b": "r2",   "bw_mbps": 50,  "delay_ms": 5 },
+    { "a": "r1",  "b": "r3",   "bw_mbps": 50,  "delay_ms": 8 },
+    { "a": "r2",  "b": "r4",   "bw_mbps": 50,  "delay_ms": 3 },
+    { "a": "r3",  "b": "r4",   "bw_mbps": 50,  "delay_ms": 3 },
+    { "a": "r2",  "b": "r5",   "bw_mbps": 30,  "delay_ms": 5 },
+    { "a": "r3",  "b": "r5",   "bw_mbps": 50,  "delay_ms": 8 },
+    { "a": "r4",  "b": "r5",   "bw_mbps": 50,  "delay_ms": 4 },
+    { "a": "r5",  "b": "sw2",  "bw_mbps": 100, "delay_ms": 0.5 },
+    { "a": "sw2", "b": "srv1", "bw_mbps": 100, "delay_ms": 0.5 },
+    { "a": "sw2", "b": "srv2", "bw_mbps": 100, "delay_ms": 0.5 }
+  ],
+  "traffic": [
+    { "src": "c1", "dst": "srv1", "rate_mbps": 6 },
+    { "src": "c2", "dst": "srv2", "rate_mbps": 6 }
+  ]
+}

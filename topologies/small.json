@@ -1,0 +1,21 @@
+{
+  "name": "netvista-small",
+  "description": "Minimal smoke-test topology: one client and one server joined by a 3-router triangle (two paths).",
+  "nodes": [
+    { "id": "c1",   "type": "client", "label": "Client", "x": 40,  "y": 150 },
+    { "id": "r1",   "type": "router", "label": "R1", "x": 200, "y": 150 },
+    { "id": "r2",   "type": "router", "label": "R2", "x": 350, "y": 40 },
+    { "id": "r3",   "type": "router", "label": "R3", "x": 500, "y": 150 },
+    { "id": "srv1", "type": "server", "label": "Server", "x": 660, "y": 150 }
+  ],
+  "links": [
+    { "a": "c1", "b": "r1",   "bw_mbps": 100, "delay_ms": 0.5 },
+    { "a": "r1", "b": "r3",   "bw_mbps": 20,  "delay_ms": 10 },
+    { "a": "r1", "b": "r2",   "bw_mbps": 50,  "delay_ms": 4 },
+    { "a": "r2", "b": "r3",   "bw_mbps": 50,  "delay_ms": 4 },
+    { "a": "r3", "b": "srv1", "bw_mbps": 100, "delay_ms": 0.5 }
+  ],
+  "traffic": [
+    { "src": "c1", "dst": "srv1", "rate_mbps": 4 }
+  ]
+}
