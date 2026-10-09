@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Start NETVISTA (Linux side). Needs root because Mininet creates namespaces/veths/qdiscs.
-#   WSL:    wsl -d Ubuntu-24.04 -u root -- bash /mnt/c/dev/NETVISTA/scripts/run.sh
+#   WSL:    wsl -d Ubuntu-24.04 -u root -- bash /mnt/c/Users/hardi/OneDrive/Desktop/NETVISTA/scripts/run.sh
 #   Linux:  sudo bash scripts/run.sh [--topology topologies/small.json] [--port 8000]
 set -euo pipefail
 

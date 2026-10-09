@@ -334,13 +334,13 @@ Start the system, then on the **Live network** page:
 
 ```bash
 # unit tests (routing, scoring, simulator, parsers, validation maths, AI detector / diagnosis / copilot)
-wsl -d Ubuntu-24.04 -u root -- bash -c "cd /mnt/c/dev/NETVISTA/backend && /opt/netvista/venv/bin/python -m pytest -m 'not emulation'"
+wsl -d Ubuntu-24.04 -u root -- bash -c "cd /mnt/c/Users/hardi/OneDrive/Desktop/NETVISTA/backend && /opt/netvista/venv/bin/python -m pytest -m 'not emulation'"
 # smoke tests that boot real Mininet topologies (stop the app first: same interface names)
-wsl -d Ubuntu-24.04 -u root -- bash -c "cd /mnt/c/dev/NETVISTA/backend && /opt/netvista/venv/bin/python -m pytest -m emulation"
+wsl -d Ubuntu-24.04 -u root -- bash -c "cd /mnt/c/Users/hardi/OneDrive/Desktop/NETVISTA/backend && /opt/netvista/venv/bin/python -m pytest -m emulation"
 # end-to-end acceptance against the running app
-wsl -d Ubuntu-24.04 -u root -- /opt/netvista/venv/bin/python /mnt/c/dev/NETVISTA/scripts/live_check.py
+wsl -d Ubuntu-24.04 -u root -- /opt/netvista/venv/bin/python /mnt/c/Users/hardi/OneDrive/Desktop/NETVISTA/scripts/live_check.py
 # calibration + full twin validation suite against the running app
-wsl -d Ubuntu-24.04 -u root -- /opt/netvista/venv/bin/python /mnt/c/dev/NETVISTA/scripts/twin_check.py --suite
+wsl -d Ubuntu-24.04 -u root -- /opt/netvista/venv/bin/python /mnt/c/Users/hardi/OneDrive/Desktop/NETVISTA/scripts/twin_check.py --suite
 ```
 
 Results at the time of writing: 132 unit tests and 2 emulation smoke tests pass,
@@ -394,7 +394,7 @@ Short version (details in DESIGN.md §14):
 
 * **"The emulated network did not start"**: run the launcher (needs root in WSL). If Open
   vSwitch is the problem, start with `NETVISTA_SWITCH=linuxbridge` (needs `bridge-utils`).
-* **Stale state after a crash**: `wsl -d Ubuntu-24.04 -u root -- bash /mnt/c/dev/NETVISTA/scripts/stop.sh`
+* **Stale state after a crash**: `wsl -d Ubuntu-24.04 -u root -- bash /mnt/c/Users/hardi/OneDrive/Desktop/NETVISTA/scripts/stop.sh`
   (kills agents and iperf3, runs `mn -c`).
 * **Backend log**: the launcher prints it to the console. Events are also appended to
   `runs/events.jsonl`.
