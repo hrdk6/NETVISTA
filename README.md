@@ -62,45 +62,58 @@ results and the limitations.
 ## Architecture
 
 ```mermaid
-flowchart LR
-    subgraph Browser["Browser (React, Cytoscape, Recharts)"]
-        UI["Live map, What-if twin,<br/>Validation, AI ops, Copilot"]
+%%{init: {"flowchart": {"wrappingWidth": 300}} }%%
+flowchart TB
+    UI["<b>Browser</b>: React, Cytoscape, Recharts<br/>Live, Assure, Designer, What-if,<br/>Validation, AI ops, Copilot"]
+    RT["<b>FastAPI runtime</b><br/>REST, WebSocket 2 Hz, SSE"]
+    UI <--> RT
+
+    subgraph DECIDE["Decide"]
+        direction LR
+        AS["<b>assure</b><br/>intents, failure analysis,<br/>planner, autopilot, drills"]
+        VAL["<b>validation</b><br/>predict, apply, compare"]
+        AI["<b>ai</b><br/>anomalies, root cause,<br/>copilot"]:::ai
+        TOPO["<b>topology</b><br/>library, design checks,<br/>redeploy"]
     end
 
-    subgraph API["FastAPI (REST + WebSocket 2 Hz + SSE)"]
-        RT["Runtime<br/>owns every subsystem"]
+    subgraph PREDICT["Predict"]
+        SIM["<b>digital twins</b> (worker processes)<br/>SimPy packet twin + fluid twin,<br/>calibrated from live probes"]:::sim
     end
 
-    subgraph WSL["WSL2 / Linux (root)"]
-        EMU["emulation<br/>Mininet, OVS, tc/netem, iperf3"]
-        TEL["telemetry<br/>probe agents + /proc counters"]
-        CHAOS["chaos<br/>fault injection"]
-        ROUTE["routing<br/>Dijkstra, Yen, score,<br/>policy-route installer"]
-        SIM["simulator (separate process)<br/>SimPy twin + calibration"]
-        VAL["validation<br/>predict, apply, measure, compare"]
-        AI["ai<br/>anomaly detector, root cause,<br/>evaluation, copilot"]
-        AS["assure<br/>intents, failure analysis,<br/>planner, autopilot, drills, benchmark"]
+    subgraph ACT["Act and measure"]
+        direction LR
+        ROUTE["<b>routing</b><br/>Dijkstra, Yen K-shortest,<br/>static / adaptive / intent"]
+        CHAOS["<b>chaos</b><br/>reversible fault injection"]
+        TEL["<b>telemetry</b><br/>probe agents, counters,<br/>host-stall guard"]
     end
 
-    LLM[("Claude API<br/>or local Ollama")]
+    EMU["<b>Emulated network</b> in WSL2 (root)<br/>Linux routers, Open vSwitch,<br/>tc/netem links, iperf3 traffic"]
+    LLM[("Gemini, Groq as backup<br/>or Claude / local Ollama")]:::ai
 
-    UI <-->|"REST, WebSocket, SSE"| RT
-    RT --- EMU & TEL & CHAOS & ROUTE & SIM & VAL & AI & AS
-    AS -.->|"fluid + packet twin"| SIM
-    AS -->|"plans (primary + backups)"| ROUTE
+    RT --> DECIDE
+    AS -.->|"what breaks if X fails?"| SIM
+    VAL -.->|"frozen prediction"| SIM
+    AS -->|"plans: primaries + backups"| ROUTE
+    VAL -->|"applies the change"| CHAOS
+    TOPO -->|"boots the drawing"| EMU
+    ROUTE -->|"ip route, ip rule"| EMU
     CHAOS -->|"tc, ip link"| EMU
-    TEL -->|"probes, counters"| EMU
-    ROUTE -->|"ip route / ip rule"| EMU
+    TEL -->|"measures"| EMU
     SIM -.->|"calibrated from"| TEL
-    VAL --> SIM
-    VAL --> CHAOS
     AI -.->|"reads measurements only"| TEL
-    AI -->|"tool calls"| LLM
+    AI -.->|"tool calls"| LLM
+
+    classDef sim stroke-dasharray: 6 4
+    classDef ai stroke-dasharray: 2 3
 ```
+
+Borders follow the UI's provenance rule: solid = measured on the live network, dashed =
+simulation or prediction, dotted = AI.
 
 ### The emulated topology
 
 ```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 300}} }%%
 flowchart LR
     c1([Client 1]) --- sw1{{"Site A switch<br/>(OVS)"}}
     c2([Client 2]) --- sw1
@@ -109,7 +122,7 @@ flowchart LR
     r1 ---|"50 Mbit/s, 8 ms"| r3[R3]
     r2 ---|"50 Mbit/s, 3 ms"| r4[R4]
     r3 ---|"50 Mbit/s, 3 ms"| r4
-    r2 ---|"30 Mbit/s, 5 ms (bottleneck)"| r5[R5 edge B]
+    r2 ---|"30 Mbit/s, 5 ms<br/>(bottleneck)"| r5[R5 edge B]
     r3 ---|"50 Mbit/s, 8 ms"| r5
     r4 ---|"50 Mbit/s, 4 ms"| r5
     r5 --- sw2{{"Site B switch<br/>(OVS)"}}
@@ -136,23 +149,44 @@ sequenceDiagram
     C->>N: ip link set down (both ends)
     P--xN: echoes stop
     Note over P,R: no echo for 1.2 s (dead interval)
-    P->>R: link declared dead (~1.3 s)
-    R->>N: install new routes make-before-break (~15-55 ms)
+    P->>R: link declared dead (1.26-1.32 s)
+    R->>N: install new routes, make-before-break (12-41 ms)
     P->>R: first end-to-end echo on the new path
-    Note over R: recovery measured (~1.45 s)
+    Note over R: recovery measured (1.34-1.43 s)
     P->>A: same probes, never the fault list
     A->>A: tomography names link r2-r5 as the cause
 ```
 
+### Failure, or the host freezing?
+
+WSL2 freezes the packet path of every namespace for about 1 s every 33 s. A real failure
+silences only the probes that cross it, so the two can be told apart:
+
+```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 300}} }%%
+flowchart TD
+    Q["A probe stream goes quiet"] --> M{"At least 80 % of<br/>all streams mute<br/>at the same moment?"}
+    M -->|"no: only the probes<br/>crossing one element"| F["<b>Real failure</b><br/>dead after 1.2 s,<br/>then reroute"]
+    M -->|"yes"| H["<b>Host stall</b><br/>the packet path froze"]
+    H --> X["Not counted as silence,<br/>in-flight probes left<br/>out of RTT and loss"]
+    H --> T{"Still silent<br/>after 4 s?"}
+    T -->|"no, typically ~1 s"| E["Stall over,<br/>logged as telemetry.stall"]
+    T -->|"yes"| O["<b>Real outage</b><br/>judged like any failure"]
+```
+
+Before this guard, a 5-minute soak with no faults showed 57 false link failures; after it, none.
+The stall can be reproduced without NETVISTA: `scripts/diagnostics/netns_stall.sh`.
+
 ### AI pipeline
 
 ```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 300}} }%%
 flowchart TD
-    S["47 signals sampled at 1 Hz<br/>link RTT/loss/load, access, flow RTT/loss,<br/>iperf3 data loss"] --> D["Learned-baseline detector<br/>EWMA mean + spread per signal"]
+    S["<b>47 signals</b> sampled at 1 Hz<br/>link RTT, loss and load, access,<br/>flow RTT and loss, iperf3 loss"] --> D["<b>Learned-baseline detector</b><br/>EWMA mean + spread per signal"]
     D -->|"z >= 4 for 3 s<br/>(or z >= 8 for 2 s)"| AN["Anomalies"]
     L["Probe liveness + paths"] --> T
-    AN --> T["Probe-path tomography<br/>greedy cover: bad probes explained,<br/>good probes contradict"]
-    T --> DX["Diagnosis<br/>element, fault type, confidence,<br/>alternatives, side effects"]
+    AN --> T["<b>Probe-path tomography</b><br/>greedy cover: bad probes<br/>explained, good ones contradict"]
+    T --> DX["<b>Diagnosis</b><br/>element, fault type, confidence,<br/>alternatives, side effects"]
     DX --> MAP["Map marker +<br/>Likely cause tag"]
     DX --> CP["Copilot tools"]
     AN --> CP
@@ -175,13 +209,20 @@ sequenceDiagram
     participant U as User
     participant UI as Copilot drawer
     participant AG as Agent loop
-    participant M as LLM (Claude or Ollama)
+    participant G as Gemini 3.8 Flash
+    participant Q as Groq GPT-OSS 120B
     participant T as Tools
     participant N as Live network
     U->>UI: "Add 30 ms to r1-r3"
     UI->>AG: question + page context (SSE stream)
-    AG->>M: question, tools
-    M->>AG: call propose_change
+    alt Gemini answers
+        AG->>G: question, tools
+        G->>AG: call propose_change (+ thought signature)
+    else Gemini rate-limited, overloaded or silent for 60 s
+        AG->>Q: the same round, compact context
+        Q->>AG: call propose_change
+        Note over AG,Q: Gemini rests 60 s, the answer names the backup
+    end
     AG->>T: validate change
     T-->>AG: proposal card (NOT applied)
     AG-->>UI: tool row, card, answer, grounding check
@@ -194,24 +235,29 @@ sequenceDiagram
 The model has read tools (live state, AI insights, events), one simulate tool (the twin) and
 propose tools. It has no tool that changes the network. After each answer, every measured
 value is looked up in the data the model read; values it cannot trace are underlined.
+Gemini's free tier answers first. Groq answers a round when Gemini is rate-limited or down;
+its own free tier is too small (about 8k tokens a minute) to be the primary.
 
 ### Assure: intents to proof
 
 ```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 300}} }%%
 flowchart LR
-    I["Intents<br/>SLOs, policy,<br/>survive single failures"] --> L["Live check<br/>every second"]
-    I --> F["Failure analysis<br/>every single failure,<br/>fluid twin + controller reaction"]
-    F --> B["Bound: exhaustive search<br/>avoidable / unavoidable / SPOF"]
-    I --> P["Planner<br/>all flows jointly +<br/>backups per failure"]
-    P --> X["Packet twin<br/>cross-check"]
+    I["<b>Intents</b><br/>SLOs and policy,<br/>survive single failures"] --> L["Live check<br/>every second"]
+    I --> F["<b>Failure analysis</b><br/>every single failure:<br/>fluid twin + controller reaction"]:::sim
+    F --> B["<b>Bound</b>: exhaustive search<br/>avoidable / unavoidable / SPOF"]:::sim
+    I --> P["<b>Planner</b><br/>all flows jointly +<br/>a backup per failure"]:::sim
+    P --> X["Packet twin<br/>cross-check"]:::sim
     X --> G{"Safety gate"}
-    G -->|"shadow: log"| S["Would apply"]
-    G -->|"approve / auto"| A["Apply<br/>(intent routing mode)"]
-    A --> V["Verify live<br/>12 s settle, 10 s measure"]
+    G -->|"shadow: log only"| S["Would apply"]
+    G -->|"approve / auto"| A["<b>Apply</b><br/>intent routing mode"]
+    A --> V["<b>Verify live</b><br/>12 s settle, 10 s measure"]
     V -->|"worse"| R["Roll back"]
     V -->|"as predicted"| K["Keep"]
-    V --> U["Residual pool<br/>prediction intervals"]
+    V --> U["Residual pool:<br/>prediction intervals"]
     D["Drills + live benchmark"] --> U
+
+    classDef sim stroke-dasharray: 6 4
 ```
 
 The controller follows the plan in **intent mode**: flows are pinned to their primary paths,
@@ -219,15 +265,41 @@ and when links die the controller names the failure (one link, or several links 
 router) and installs that failure's pre-planned backups at once. Restored links are trusted
 again only after a 5 s wait-to-restore.
 
+### Designer: draw it, then boot it
+
+```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 300}} }%%
+flowchart TB
+    subgraph BROWSER["In the browser"]
+        direction LR
+        D["Draw, or open from the library<br/>(Abilene, metro ring)"] --> C["<b>Design checks</b><br/>disjoint paths, SPOFs,<br/>traffic that cannot fit"]
+        C --> S["Save to<br/>topologies/user/"]
+    end
+    subgraph HOST["On the host, about 4 s"]
+        direction LR
+        R["Tear down<br/>probes, iperf3, Mininet"] --> B["<b>Boot real routers</b><br/>namespaces, OVS, veth + tc"]
+        B --> P["Probes, routing and<br/>Assure run on it"]
+    end
+    BROWSER -->|"Deploy"| HOST
+    HOST --> M["The UI reloads the map (new boot id)"]
+```
+
+Packet Tracer simulates a network you draw. The Designer boots it, and every page then works on
+it: Abilene was deployed this way, analysed (25 failures in 1.8 s), planned, verified live and
+drilled.
+
 ### Validation loop
 
 ```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 300}} }%%
 flowchart LR
-    P["1. Predict<br/>(twin, frozen)"] --> A["2. Apply the same<br/>change live"]
-    A --> S["3. Settle 8 s"]
-    S --> M["4. Measure 12 s<br/>probes + iperf3"]
-    M --> R["5. Revert"]
-    R --> C["6. Compare<br/>latency, throughput,<br/>loss, path"]
+    P["<b>Predict</b><br/>twin, frozen first"]:::sim --> A["<b>Apply</b> the same<br/>change live"]
+    A --> S["<b>Settle</b> 8 s"]
+    S --> M["<b>Measure</b> 12 s<br/>probes + iperf3"]
+    M --> R["<b>Revert</b>"]
+    R --> C["<b>Compare</b> latency,<br/>throughput, loss, path"]
+
+    classDef sim stroke-dasharray: 6 4
 ```
 
 ## Results
