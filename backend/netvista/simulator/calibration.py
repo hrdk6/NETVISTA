@@ -72,7 +72,16 @@ def collect_live(rt, window_s: float = 15.0) -> list[dict]:
     now = time.time()
     out = []
     for sid, s in list(rt.store.streams.items()):
-        samples = sorted(s.rtt_samples(now - window_s, now))
+        t0 = now - window_s
+        if sid.startswith("F:"):
+            # only samples taken on the flow's current path: a window that spans a reroute mixes
+            # two paths' RTTs and the twin is compared with the wrong one (found live: a reroute
+            # during calibration gave a 5.7 ms fit RMS and a noise distribution full of queueing outliers)
+            f = rt.controller.flows.get(sid[2:])
+            if f is None:
+                continue
+            t0 = max(t0, (f.since or 0.0) + 1.0)
+        samples = sorted(s.rtt_samples(t0, now))
         if len(samples) < 20:
             continue
         path = stream_path(rt, sid)

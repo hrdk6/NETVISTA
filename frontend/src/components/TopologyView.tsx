@@ -39,6 +39,18 @@ export interface MapCause {
   confidence: string;
 }
 
+/** Predicted impact if this element fails (Assure failure analysis). Keys: "link:<id>" / "node:<id>". */
+export interface RiskVis {
+  /** 0..1, the worst failure scores 1 */
+  norm: number;
+  /** the failure cuts some flow off whatever the routing does (single point of failure) */
+  spof: boolean;
+  /** intents predicted to break */
+  breaks: string[];
+  /** of those, the ones a better routing would have kept */
+  avoidable: string[];
+}
+
 export interface NodeVis {
   health: Health;
   /** measured packets/s through the node (live only) - drives the activity LED */
@@ -57,7 +69,9 @@ interface Props {
   links: Record<string, LinkVis>;
   nodes: Record<string, NodeVis>;
   strands: StrandVis[];
-  colorMode?: "load" | "latency";
+  colorMode?: "load" | "latency" | "risk";
+  /** predicted failure impact per element, drawn in "risk" colour mode */
+  risk?: Record<string, RiskVis> | null;
   packets?: boolean;
   highlight?: string[] | null;
   selected?: Selection;
@@ -488,24 +502,37 @@ export default function TopologyView(props: Props) {
         } else {
           let core: string;
           let glow = u;
-          if (p.colorMode === "latency") {
+          const rk = p.colorMode === "risk" ? p.risk?.[`link:${l.id}`] : undefined;
+          if (p.colorMode === "risk") {
+            const n = rk ? Math.max(0, Math.min(1, rk.norm)) : 0;
+            core = rk ? mix("#3b4a59", "#ff7a59", Math.pow(n, 0.7)) : "#2c3946";
+            glow = n * 0.85;
+            if (rk?.spof) {
+              f.strokeStyle = "rgba(255,122,89,0.55)";
+              f.lineWidth = w + 9 * zs;
+              f.setLineDash([3 * zs, 4 * zs]);
+              line(f, A, B);
+              f.setLineDash([]);
+            }
+          } else if (p.colorMode === "latency") {
             const over = v.rtt != null && v.expected ? Math.max(0, v.rtt - v.expected) / Math.max(4, v.expected) : 0;
             core = mix("#3a4b5e", "#ffd9a0", Math.min(1, Math.pow(over, 0.6)));
             glow = Math.min(1, over) * 0.8;
           } else {
             core = sim ? mix("#2f4c6a", "#cfe7ff", Math.pow(u, 0.6)) : mix("#36485c", "#eef4fa", Math.pow(u, 0.6));
           }
-          if (v.health === "degraded") core = mix("#6e5a30", STATUS.degraded, 0.45 + 0.45 * u);
+          if (v.health === "degraded" && p.colorMode !== "risk") core = mix("#6e5a30", STATUS.degraded, 0.45 + 0.45 * u);
           f.strokeStyle = core;
           f.lineWidth = w;
           if (glow > 0.03) {
-            f.shadowColor = p.colorMode === "latency" ? `rgba(255,200,140,${0.6 * glow})` : `rgba(200,225,255,${0.55 * glow})`;
+            f.shadowColor =
+              p.colorMode === "risk" ? `rgba(255,122,89,${0.6 * glow})` : p.colorMode === "latency" ? `rgba(255,200,140,${0.6 * glow})` : `rgba(200,225,255,${0.55 * glow})`;
             f.shadowBlur = (4 + 18 * glow) * zs;
           }
           line(f, A, B);
           f.shadowBlur = 0;
           // a bright filament along the core when loaded
-          if (u > 0.05 && p.colorMode !== "latency") {
+          if (u > 0.05 && p.colorMode === "load") {
             f.strokeStyle = `rgba(255,255,255,${0.15 + 0.35 * u})`;
             f.lineWidth = Math.max(0.8, w * 0.22);
             line(f, A, B);
@@ -521,7 +548,7 @@ export default function TopologyView(props: Props) {
       for (const s of shown) {
         const st = flowStyle(p.pairs, s.pair);
         const path = s.path!;
-        const focusDim = p.focusPair && p.focusPair !== s.pair ? 0.15 : 1;
+        const focusDim = (p.focusPair && p.focusPair !== s.pair ? 0.15 : 1) * (p.colorMode === "risk" ? 0.3 : 1);
         const t0 = drawOn.current.get(s.pair);
         const prog = reduce || t0 === undefined ? 1 : Math.min(1, (now - t0) / DRAW_ON_MS);
         if (prog >= 1 && t0 !== undefined) drawOn.current.delete(s.pair);
@@ -777,7 +804,7 @@ export default function TopologyView(props: Props) {
         const dimmed = hlNodes ? !hlNodes.has(n.id) : false;
         o.save();
         o.globalAlpha = dimmed ? 0.35 : 1;
-        if (health === "down" || health === "degraded") {
+        if (health === "down" || (health === "degraded" && p.colorMode !== "risk")) {
           const col = STATUS[health];
           const period = health === "down" ? 1600 : 2600;
           const ph = reduce ? 0.35 : ((now + idx * 170) % period) / period;
@@ -787,6 +814,36 @@ export default function TopologyView(props: Props) {
           o.strokeStyle = rgba(col, (1 - ph) * (health === "down" ? 0.7 : 0.45));
           o.lineWidth = 2 * zs;
           ellipse(o, c.x, c.y + 2 * zoom, hw + (7 + 16 * ph) * zs, hh + (6 + 13 * ph) * zs);
+        }
+        // predicted failure impact (dashed = a prediction, never a measurement)
+        const rn = p.colorMode === "risk" ? p.risk?.[`node:${n.id}`] : undefined;
+        if (rn && (rn.norm > 0.001 || rn.spof)) {
+          const k = Math.max(0, Math.min(1, rn.norm));
+          o.strokeStyle = rn.spof ? "#ff7a59" : mix("#7c8a98", "#ff7a59", Math.pow(k, 0.7));
+          o.lineWidth = (1.4 + 2.2 * k) * zs;
+          o.setLineDash([4 * zs, 3 * zs]);
+          ellipse(o, c.x, c.y + 2 * zoom, hw + 9 * zs, hh + 8 * zs);
+          o.setLineDash([]);
+          if (zoom > 0.45) {
+            const tag = rn.spof ? "single point of failure" : rn.breaks.length ? `if it fails: breaks ${rn.breaks.join(", ")}` : "";
+            if (tag) {
+              o.font = `600 ${Math.round(11 * Math.min(1.1, Math.max(0.85, zoom)))}px "Barlow Semi Condensed", Barlow, sans-serif`;
+              o.textAlign = "center";
+              const ty = c.y - hh - 14 * zs;
+              const tw = o.measureText(tag).width + 12;
+              o.fillStyle = "rgba(18,26,35,0.92)";
+              o.beginPath();
+              o.roundRect(c.x - tw / 2, ty - 10, tw, 17, 3);
+              o.fill();
+              o.setLineDash([2, 2]);
+              o.strokeStyle = "rgba(255,122,89,0.75)";
+              o.lineWidth = 1;
+              o.stroke();
+              o.setLineDash([]);
+              o.fillStyle = "#ffc2b3";
+              o.fillText(tag, c.x, ty + 2.5);
+            }
+          }
         }
         if (p.selected?.kind === "node" && p.selected.id === n.id) {
           o.strokeStyle = "rgba(230,228,223,0.9)";
@@ -1006,6 +1063,8 @@ function HoverCard({ hover, props, labels, wrap }: { hover: NonNullable<Hover>; 
     const flows = props.strands.filter((s) => s.offered_mbps > 0 && s.path && s.path.some((n, i) => i < s.path!.length - 1 && ((n === spec.a && s.path![i + 1] === spec.b) || (n === spec.b && s.path![i + 1] === spec.a))));
     if (flows.length) rows.push(["Carrying", flows.map((f) => f.pair.replace(">", " → ")).join(", ")]);
     unusual = v.anomalies ?? [];
+    const rk = props.risk?.[`link:${hover.id}`];
+    if (rk) rows.push(["If it fails", rk.spof ? "cuts flows off" : rk.breaks.length ? `breaks ${rk.breaks.join(", ")}` : "every intent holds"]);
   } else {
     const n = props.topology.nodes.find((x) => x.id === hover.id);
     const v = props.nodes[hover.id];
@@ -1013,6 +1072,8 @@ function HoverCard({ hover, props, labels, wrap }: { hover: NonNullable<Hover>; 
     [title, sub] = labels[n.id] ?? [n.id, n.type];
     health = v?.health ?? "unknown";
     if (v?.pps != null) rows.push(["Packets/s", v.pps.toFixed(0)]);
+    const rk = props.risk?.[`node:${hover.id}`];
+    if (rk) rows.push(["If it fails", rk.spof ? "cuts flows off" : rk.breaks.length ? `breaks ${rk.breaks.join(", ")}` : "every intent holds"]);
   }
   return (
     <div className="pointer-events-none absolute z-10 w-[220px] rounded-md border border-line-strong bg-[#121a23f2] px-3 py-2 text-[12.5px] shadow-[0_8px_24px_rgba(0,0,0,0.35)]" style={{ left, top }}>

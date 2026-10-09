@@ -91,7 +91,7 @@ class AIService:
             if st is None:
                 return None, None
             d = st.is_dead(now, dead_min, dead_mult)
-            silent = now - st.last_reply_t if st.last_reply_t else None
+            silent = st.silence(now)
             return (None if d is None else not d), silent
 
         flows: dict[str, FlowInfo] = {}

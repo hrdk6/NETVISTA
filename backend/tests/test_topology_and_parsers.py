@@ -88,6 +88,8 @@ def test_parse_iperf_interval():
     assert s == {"rx_mbps": 6.0, "jitter_ms": 0.022, "lost": 3, "total": 625}
     assert parse_iperf_interval("[  5]   0.00-10.00  sec  7.15 MBytes  6.00 Mbits/sec  0.019 ms  0/6250 (0%)  receiver") is None
     assert parse_iperf_interval("Server listening on 5201") is None
+    # iperf3's sequence-gap counter can wrap on reordered datagrams: an impossible interval is dropped
+    assert parse_iperf_interval("[  5]   7.00-8.00   sec   732 KBytes  6.00 Mbits/sec  0.022 ms  4919131752989214/625 (491913175298921408%)") is None
 
 
 def test_percentile_matches_numpy_linear():
@@ -141,3 +143,100 @@ def test_validation_aggregate_rows_for_shared_bottleneck():
     assert summary["aggregate_throughput_err"] == pytest.approx(0.0, abs=1e-9)
     assert summary["aggregate_loss_err_pp"] == pytest.approx(0.0, abs=1e-9)  # (62+9)/2 == (30+41)/2
     assert summary["throughput_mape"] > 40  # the per-flow split is still reported honestly
+
+
+def test_liveness_is_judged_up_to_what_the_agent_has_reported():
+    from netvista.telemetry.health import ProbeStream
+
+    s = ProbeStream("L:r1-r2", created_t=0.0)
+    s.on_reply(100.0, 10.0)
+    s.seen_until = 100.0
+    # the backend was starved for 1.5 s: no report since the last echo. Not a failure, just late news
+    assert s.is_dead(101.5, 1.2, 3.0) is False
+    # the agent's reports keep coming but carry no echo: that IS silence on the wire
+    s.seen_until = 101.5
+    assert s.is_dead(101.6, 1.2, 3.0) is True
+    # an agent that stopped reporting altogether is judged on the backend's own clock
+    t = ProbeStream("L:r2-r5", created_t=0.0)
+    t.on_reply(100.0, 10.0)
+    t.seen_until = 100.0
+    assert t.is_dead(104.0, 1.2, 3.0) is True
+
+
+def _store_with(n: int, t: float):
+    from netvista.telemetry.health import ProbeStore
+
+    store = ProbeStore()
+    for i in range(n):
+        s = store.ensure(f"L:s{i}", 0.0)
+        s.on_reply(t, 10.0)
+        s.seen_until = t
+    return store
+
+
+def _tick(store, t: float, answering=()):
+    for sid, s in store.streams.items():
+        if sid in answering:
+            s.on_reply(t, 10.0)
+        s.seen_until = t
+    return store.check_stall(t)
+
+
+def test_host_stall_is_not_a_link_failure():
+    """Every stream mute at once (WSL2 freezes all namespaces ~1.3 s every ~32 s) must not kill links,
+    and the echoes that sat through the freeze must not pollute the RTT statistics."""
+    store = _store_with(8, 100.0)
+    ended = []
+    store.on_stall = ended.append
+    t = 100.0
+    while t < 101.5:  # 1.5 s of total silence: longer than the 1.2 s dead interval
+        t = round(t + 0.1, 1)
+        _tick(store, t)
+    s0 = store.streams["L:s0"]
+    assert store.stalls and store.stalls[-1].end is None
+    assert s0.is_dead(t, 1.2, 3.0) is False and s0.silence(t) < 0.6
+    # the freeze lifts: the held echoes arrive with ~1.4 s RTT, then normal ones
+    for s in store.streams.values():
+        s.on_reply(t + 0.05, 1400.0)
+    _tick(store, t + 0.1, answering=set(store.streams))
+    assert ended and 1.3 < ended[0].end - ended[0].start < 1.8 and not ended[0].outage
+    assert s0.excluded >= 1 and max(r for _, r in s0.outcomes) == 10.0
+    assert s0.is_dead(t + 0.2, 1.2, 3.0) is False
+    assert store.stall_summary()["count"] == 1
+
+
+def test_real_failure_during_normal_operation_is_still_detected():
+    store = _store_with(8, 100.0)
+    t = 100.0
+    others = {sid for sid in store.streams if sid not in ("L:s0", "L:s1")}  # 2 of 8 links fail: 25%
+    while t < 101.4:
+        t = round(t + 0.1, 1)
+        _tick(store, t, answering=others)
+    assert not store.stalls
+    assert store.streams["L:s0"].is_dead(t, 1.2, 3.0) is True
+    assert store.streams["L:s2"].is_dead(t, 1.2, 3.0) is False
+
+
+def test_a_long_total_silence_is_judged_as_an_outage():
+    store = _store_with(8, 100.0)
+    t = 100.0
+    while t < 105.0:
+        t = round(t + 0.1, 1)
+        _tick(store, t)
+    assert store.stalls[-1].outage
+    assert store.streams["L:s0"].is_dead(t, 1.2, 3.0) is True  # the excuse is withdrawn after STALL_MAX_S
+
+
+def test_a_link_dead_before_the_stall_stays_dead():
+    store = _store_with(8, 100.0)
+    t = 100.0
+    others = set(store.streams) - {"L:s0"}
+    while t < 102.0:  # s0 fails at 100.0 and is declared dead at ~101.2
+        t = round(t + 0.1, 1)
+        _tick(store, t, answering=others)
+    assert store.streams["L:s0"].is_dead(t, 1.2, 3.0) is True
+    while t < 103.4:  # then the host freezes
+        t = round(t + 0.1, 1)
+        _tick(store, t)
+    assert store.stalls and store.streams["L:s0"].is_dead(t, 1.2, 3.0) is True
+    assert store.streams["L:s3"].is_dead(t, 1.2, 3.0) is False

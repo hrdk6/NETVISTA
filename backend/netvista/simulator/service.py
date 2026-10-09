@@ -24,6 +24,22 @@ from .calibration import calibration_model_cfg, collect_live, finish_calibration
 from .whatif import run_prediction
 
 log = logging.getLogger(__name__)
+MAX_FIT_RMS_MS = 1.0  # a steady network fits E + H*2n to ~0.1 ms; worse means it was changing
+
+
+class CalibrationRejected(ValueError):
+    pass
+
+
+def _low_priority() -> None:
+    """Twin and planner workers yield the CPU to the emulation: a minute-long search must never
+    delay a probe agent or an iperf3 sender (that would show up as RTT tails on the live network)."""
+    import os
+
+    try:
+        os.nice(10)
+    except OSError:
+        pass
 
 
 class SimulatorService:
@@ -32,10 +48,11 @@ class SimulatorService:
         self.calibration: dict | None = None
         self.predictions: deque[dict] = deque(maxlen=40)
         self._ids = itertools.count(1)
-        self._pool = ProcessPoolExecutor(max_workers=2, mp_context=mp.get_context("spawn"))
+        self._pool = ProcessPoolExecutor(max_workers=2, mp_context=mp.get_context("spawn"), initializer=_low_priority)
         self._busy = 0
         self.lock = threading.Lock()
         self._cal_path = rt.s.runs_dir / "calibration.json"
+        self.rejected: dict | None = None
 
     # ------------------------------------------------------------------ calibration
     def calibrate(self, window_s: float = 15.0) -> dict:
@@ -47,6 +64,19 @@ class SimulatorService:
         cal = finish_calibration(self.rt, live, sim_probes, window_s)
         if cal["n_streams"] == 0:
             raise ValueError("calibration produced no usable streams")
+        if cal["fit_rms_ms"] > MAX_FIT_RMS_MS:
+            # the overheads are tenths of a millisecond; a fit this poor means the network was not
+            # in a steady state (queues filling, paths changing): keep what we had
+            self.rt.events.emit(
+                "sim.calibrate",
+                f"Twin calibration rejected: fit RMS {cal['fit_rms_ms']:.2f} ms > {MAX_FIT_RMS_MS} ms (the network was not steady); "
+                + ("keeping the previous calibration" if self.calibration else "the twin runs without overhead terms until the next attempt"),
+                severity="warn",
+            )
+            self.rejected = cal
+            if self.calibration is None:
+                raise CalibrationRejected("network not steady")
+            return self.calibration_dict()
         self.calibration = cal
         try:
             self._cal_path.write_text(json.dumps(cal, indent=1))
@@ -71,13 +101,17 @@ class SimulatorService:
         c["noise_samples"] = len(c.pop("noise_ms", []))
         return c
 
-    def auto_calibrate(self, delay_s: float = 15.0) -> None:
+    def auto_calibrate(self, delay_s: float = 15.0, attempts: int = 8, retry_s: float = 20.0) -> None:
         def run():
             time.sleep(delay_s)
-            try:
-                self.calibrate()
-            except Exception as e:
-                log.warning("auto-calibration failed: %s", e)
+            for _ in range(attempts):
+                try:
+                    self.calibrate()
+                    if self.calibration is not None:
+                        return
+                except Exception as e:
+                    log.warning("auto-calibration attempt failed: %s", e)
+                time.sleep(retry_s)
 
         threading.Thread(target=run, name="auto-calibrate", daemon=True).start()
 
@@ -144,12 +178,31 @@ class SimulatorService:
             labels.append(f"Demand {pair.replace('>', '→')} = {float(rate):g} Mbit/s")
         for p in pairs.values():
             p["offered_mbps"] = sum(f["rate_mbps"] for f in p["flows"])
+        mode = routing_mode or ctrl.mode
+        if mode == "intent":
+            # the controller follows its plan: the twin uses the plan's paths for the failure the
+            # what-if creates (pre-planned backups), and the adaptive rule where the plan has none
+            from ..routing.protection import desired_paths
+
+            plan = ctrl.route_plan
+            if plan is None:
+                mode = "adaptive"
+            else:
+                failed = {lid for lid, l in links.items() if not l["up"] and lid in ctrl.core_links}
+                _, want = desired_paths(plan, failed, topo)
+                if all(want.get(p) for p in pairs):
+                    for p in pairs:
+                        pairs[p]["path"] = list(want[p])
+                    mode = "fixed"
+                else:
+                    mode = "adaptive"
         cal = self.calibration or {}
         cfg = {
             "links": links,
             "pairs": pairs,
             "routers": topo.routers,
-            "mode": routing_mode or ctrl.mode,
+            "mode": mode,
+            "herd_guard": ctrl.herd_guard,
             "weights": weights or ctrl.weights.to_dict(),
             "hysteresis": ctrl.hysteresis,
             "duration_s": duration_s,
@@ -210,8 +263,8 @@ class SimulatorService:
         seed: int = 1,
         record: bool = True,
     ) -> dict:
-        if routing_mode not in (None, "static", "adaptive"):
-            raise ValueError("routing_mode must be static or adaptive")
+        if routing_mode not in (None, "static", "adaptive", "intent"):
+            raise ValueError("routing_mode must be static, adaptive or intent")
         if self.calibration is None:
             try:
                 self.calibrate()

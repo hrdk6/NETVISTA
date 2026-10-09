@@ -1,5 +1,7 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import AIInsights from "../components/AIInsights";
+import { IntentsCard } from "../components/assure/IntentsCard";
+import { riskVis } from "../components/assure/Resilience";
 import EventLog from "../components/EventLog";
 import ActiveFaults from "../components/Faults";
 import Inspector from "../components/Inspector";
@@ -17,9 +19,11 @@ export default function LivePage() {
   const pairs = useStore((s) => s.pairs);
   const selected = useStore((s) => s.selected);
   const select = useStore((s) => s.select);
-  const [colorMode, setColorMode] = useState<"load" | "latency">("load");
+  const [colorMode, setColorMode] = useState<"load" | "latency" | "risk">("load");
   const [focus, setFocus] = useState<string | null>(null);
   const vis = useLiveVis(snap);
+  const crit = snap.assure?.resilience?.criticality;
+  const risk = useMemo(() => riskVis(crit), [crit]);
   const background = snap.traffic.filter((f) => f.kind === "background" && f.state === "running");
 
   return (
@@ -39,6 +43,14 @@ export default function LivePage() {
               </button>
               <button aria-pressed={colorMode === "latency"} onClick={() => setColorMode("latency")} title="Cable glow shows how much slower than designed the probes measure">
                 Latency
+              </button>
+              <button
+                aria-pressed={colorMode === "risk"}
+                onClick={() => setColorMode("risk")}
+                title="Predicted: how many intents would break if this link or router failed (Assure failure analysis)"
+                disabled={!crit}
+              >
+                Risk
               </button>
             </div>
             {background.length ? (
@@ -60,6 +72,7 @@ export default function LivePage() {
           nodes={vis.nodes}
           strands={vis.strands}
           colorMode={colorMode}
+          risk={risk}
           selected={selected}
           onSelect={select}
           focusPair={focus}
@@ -73,6 +86,7 @@ export default function LivePage() {
 
       <aside className="flex min-h-0 flex-col gap-3 xl:overflow-auto xl:pr-1">
         <DemoProgress />
+        <IntentsCard />
         <AIInsights />
         <Inspector />
         <ActiveFaults />

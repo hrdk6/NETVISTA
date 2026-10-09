@@ -85,15 +85,27 @@ class AgentManager:
             self.lines_seen[node] += 1
             if "r" not in msg:
                 continue
-            now = time.time()  # backend receive time drives liveness (agent clock only used for RTT)
+            # The agent stamps its report (and each echo) with the kernel's wall clock, which every
+            # namespace shares with the backend. Liveness is judged on those times, up to the moment
+            # the agent has reported: if this reader thread is starved (GIL, scheduler), the report
+            # is late but its times are right, so a backend stall can no longer fake a link failure
+            # (it did: six links "died" for 100 ms at once - DESIGN.md section 11.10).
+            now = time.time()
+            t_agent = float(msg.get("t") or now)
             with self.store.lock:
-                for idx, _seq, rtt in msg["r"]:
+                for r in msg["r"]:
+                    idx, rtt = r[0], r[2]
                     if idx < len(tlist):
-                        self.store.ensure(tlist[idx].stream_id, now).on_reply(now, float(rtt))
+                        t_rx = float(r[3]) if len(r) > 3 else t_agent
+                        self.store.ensure(tlist[idx].stream_id, now).on_reply(t_rx, float(rtt))
                 for idx, _seq in msg["l"]:
                     if idx < len(tlist):
                         # a loss is only known `timeout` after the probe left; date it at send time
-                        self.store.ensure(tlist[idx].stream_id, now).on_loss(now - timeout)
+                        self.store.ensure(tlist[idx].stream_id, now).on_loss(t_agent - timeout, t_agent)
+                for t in tlist:
+                    self.store.ensure(t.stream_id, now).seen_until = t_agent
+            # every namespace mute at once is the host freezing, not the network failing (health.py)
+            self.store.check_stall(t_agent)
         log.warning("probe agent on %s exited (code %s)", node, proc.poll())
 
     def alive(self) -> dict[str, bool]:

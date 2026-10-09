@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { changeLabel } from "../components/ChangeBuilder";
 import { api } from "../lib/api";
-import { clock, num, pairLabel } from "../lib/format";
+import { clock, isRouter, num, pairLabel } from "../lib/format";
 import { act, useStore } from "../lib/store";
 import type { ValidationRow, ValidationRun } from "../lib/types";
 
@@ -105,6 +105,8 @@ export default function ValidationPage() {
         <Stat label="Paths predicted correctly" value={agg.path} unit="%" digits={0} />
       </div>
 
+      <EngineComparison runs={runs} />
+
       {runs.length > 0 && (
         <div className="grid gap-3 lg:grid-cols-2">
           <ErrorChart
@@ -162,6 +164,62 @@ export default function ValidationPage() {
   );
 }
 
+/** The same runs scored for both engines: the packet-level SimPy twin and the closed-form fluid model. */
+function EngineComparison({ runs }: { runs: ValidationRun[] }) {
+  const both = runs.filter((r) => r.summary_fluid && Object.keys(r.summary_fluid).length);
+  if (!both.length) return null;
+  const row = (pick: (r: ValidationRun) => Partial<ValidationRun["summary"]> | undefined, wall: (r: ValidationRun) => number | null | undefined) => ({
+    p50: mean(both.map((r) => pick(r)?.latency_p50_mape)),
+    p95: mean(both.map((r) => pick(r)?.latency_p95_mape)),
+    thr: mean(both.map((r) => pick(r)?.throughput_mape)),
+    agg: mean(both.map((r) => pick(r)?.aggregate_throughput_err)),
+    loss: mean(both.map((r) => pick(r)?.loss_mae_pp)),
+    path: mean(both.map((r) => pick(r)?.path_match_pct)),
+    wall: mean(both.map((r) => wall(r))),
+  });
+  const rows = [
+    { name: "Packet twin (SimPy)", v: row((r) => r.summary, (r) => r.sim_wall_s) },
+    { name: "Fluid model (closed form)", v: row((r) => r.summary_fluid, (r) => r.fluid_wall_s) },
+  ];
+  const f = (x: number | null, d = 2, u = "%") => (x == null ? "–" : `${num(x, d)}${u}`);
+  return (
+    <section className="panel p-4">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="panel-title">Two engines, one measurement</h2>
+        <span className="hint">mean over the {both.length} runs that scored both; the fluid model drives failure analysis and planning (Assure)</span>
+      </div>
+      <table className="data mt-2">
+        <thead>
+          <tr>
+            <th>Engine</th>
+            <th className="text-right">RTT p50</th>
+            <th className="text-right">RTT p95</th>
+            <th className="text-right">Throughput</th>
+            <th className="text-right">Bottleneck total</th>
+            <th className="text-right">Loss</th>
+            <th className="text-right">Paths</th>
+            <th className="text-right">Time per prediction</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.name}>
+              <td>{r.name}</td>
+              <td className="text-right">{f(r.v.p50)}</td>
+              <td className="text-right">{f(r.v.p95)}</td>
+              <td className="text-right">{f(r.v.thr)}</td>
+              <td className="text-right">{f(r.v.agg)}</td>
+              <td className="text-right">{f(r.v.loss, 2, " pp")}</td>
+              <td className="text-right">{f(r.v.path, 0)}</td>
+              <td className="text-right">{r.v.wall == null ? "–" : r.v.wall >= 0.1 ? `${num(r.v.wall, 2)} s` : `${num(r.v.wall * 1000, 2)} ms`}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
+  );
+}
+
 function Stat({ label, value, unit, digits = 1 }: { label: string; value: number | null; unit: string; digits?: number }) {
   return (
     <div className="panel px-4 py-3">
@@ -177,7 +235,7 @@ function Stat({ label, value, unit, digits = 1 }: { label: string; value: number
 
 function fmtVal(r: ValidationRow, v: number | string | null) {
   if (v == null) return "–";
-  if (typeof v === "string") return v.split("-").filter((n) => /^r\d/.test(n)).join(" · ") || v;
+  if (typeof v === "string") return v.split("-").filter(isRouter).join(" · ") || v;
   if (r.unit === "ms") return `${v.toFixed(2)} ms`;
   if (r.unit === "%") return `${v.toFixed(2)}%`;
   if (r.unit === "Mbit/s") return `${v.toFixed(2)}`;

@@ -1,0 +1,46 @@
+{
+  "name": "abilene",
+  "description": "The Abilene (Internet2) research backbone: 11 US points of presence and 14 links, the classic topology of traffic-engineering research. One-way delays follow the city distances at fibre speed (about 200 km per ms). Capacities are scaled from 10 Gbit/s to 50 Mbit/s for the emulation; Atlanta-Indianapolis keeps its quarter-capacity ratio (2.5 vs 10 Gbit/s). Clients sit in Seattle and Los Angeles, servers in New York and Washington.",
+  "defaults": { "bw_mbps": 50, "queue_pkts": 1000 },
+  "nodes": [
+    { "id": "c1",   "type": "client", "label": "Client Seattle", "x": -90,  "y": 40 },
+    { "id": "c2",   "type": "client", "label": "Client LA",      "x": -10,  "y": 470 },
+    { "id": "sttl", "type": "router", "label": "Seattle (STTL)",       "x": 90,   "y": 70 },
+    { "id": "snva", "type": "router", "label": "Sunnyvale (SNVA)",     "x": 60,   "y": 250 },
+    { "id": "losa", "type": "router", "label": "Los Angeles (LOSA)",   "x": 160,  "y": 390 },
+    { "id": "dnvr", "type": "router", "label": "Denver (DNVR)",        "x": 400,  "y": 200 },
+    { "id": "kscy", "type": "router", "label": "Kansas City (KSCY)",   "x": 610,  "y": 240 },
+    { "id": "hstn", "type": "router", "label": "Houston (HSTN)",       "x": 590,  "y": 450 },
+    { "id": "chin", "type": "router", "label": "Chicago (CHIN)",       "x": 810,  "y": 90 },
+    { "id": "ipls", "type": "router", "label": "Indianapolis (IPLS)",  "x": 820,  "y": 250 },
+    { "id": "atla", "type": "router", "label": "Atlanta (ATLA)",       "x": 900,  "y": 410 },
+    { "id": "nycm", "type": "router", "label": "New York (NYCM)",      "x": 1080, "y": 90 },
+    { "id": "wash", "type": "router", "label": "Washington (WASH)",    "x": 1070, "y": 290 },
+    { "id": "srv1", "type": "server", "label": "Server New York",  "x": 1250, "y": 60 },
+    { "id": "srv2", "type": "server", "label": "Server Washington", "x": 1250, "y": 320 }
+  ],
+  "links": [
+    { "a": "c1",   "b": "sttl", "bw_mbps": 100, "delay_ms": 0.5 },
+    { "a": "c2",   "b": "losa", "bw_mbps": 100, "delay_ms": 0.5 },
+    { "a": "sttl", "b": "snva", "delay_ms": 5.7 },
+    { "a": "sttl", "b": "dnvr", "delay_ms": 8.2 },
+    { "a": "snva", "b": "losa", "delay_ms": 2.4 },
+    { "a": "snva", "b": "dnvr", "delay_ms": 7.6 },
+    { "a": "losa", "b": "hstn", "delay_ms": 11.0 },
+    { "a": "dnvr", "b": "kscy", "delay_ms": 4.5 },
+    { "a": "kscy", "b": "hstn", "delay_ms": 5.3 },
+    { "a": "kscy", "b": "ipls", "delay_ms": 3.7 },
+    { "a": "hstn", "b": "atla", "delay_ms": 5.7 },
+    { "a": "ipls", "b": "chin", "delay_ms": 1.3 },
+    { "a": "ipls", "b": "atla", "bw_mbps": 12.5, "delay_ms": 3.5 },
+    { "a": "chin", "b": "nycm", "delay_ms": 5.8 },
+    { "a": "atla", "b": "wash", "delay_ms": 4.4 },
+    { "a": "nycm", "b": "wash", "delay_ms": 1.7 },
+    { "a": "nycm", "b": "srv1", "bw_mbps": 100, "delay_ms": 0.5 },
+    { "a": "wash", "b": "srv2", "bw_mbps": 100, "delay_ms": 0.5 }
+  ],
+  "traffic": [
+    { "src": "c1", "dst": "srv1", "rate_mbps": 8 },
+    { "src": "c2", "dst": "srv2", "rate_mbps": 8 }
+  ]
+}

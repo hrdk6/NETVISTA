@@ -1,0 +1,224 @@
+[
+ {
+  "id": "d1791535929635",
+  "t": 1791535929.6353705,
+  "scenario": {
+   "id": "link:r2-r5",
+   "kind": "link",
+   "label": "Link r2-r5 fails",
+   "links": [
+    "r2-r5"
+   ],
+   "nodes": []
+  },
+  "mode": "intent",
+  "plan": "P1",
+  "intents": [
+   {
+    "intent": "I1",
+    "predicted": "held",
+    "measured": "held",
+    "match": true
+   },
+   {
+    "intent": "I2",
+    "predicted": "held",
+    "measured": "held",
+    "match": true
+   },
+   {
+    "intent": "I3",
+    "predicted": "held",
+    "measured": "held",
+    "match": true
+   },
+   {
+    "intent": "I4",
+    "predicted": "held",
+    "measured": "held",
+    "match": true
+   },
+   {
+    "intent": "I5",
+    "predicted": "held",
+    "measured": "held",
+    "match": true
+   }
+  ],
+  "intent_accuracy": 100.0,
+  "paths_match_fluid": true,
+  "paths_match_packet": true,
+  "summary_fluid": {
+   "aggregate_throughput_err": 0.01666388935175955,
+   "aggregate_loss_err_pp": 0.0,
+   "latency_mape": 3.723635466993945,
+   "latency_p50_mape": 0.8177317247419478,
+   "latency_p95_mape": 3.2805098826130132,
+   "throughput_mape": 0.020824656393161674,
+   "loss_mae_pp": 0.0,
+   "probe_loss_mae_pp": 0.0,
+   "path_match_pct": 100.0,
+   "n_rows": 30
+  },
+  "summary_packet": {
+   "aggregate_throughput_err": 0.0056657223795961165,
+   "aggregate_loss_err_pp": 0.0,
+   "latency_mape": 2.268186517266785,
+   "latency_p50_mape": 0.22411772041712136,
+   "latency_p95_mape": 2.1402929255851104,
+   "throughput_mape": 0.1632913369429308,
+   "loss_mae_pp": 0.0,
+   "probe_loss_mae_pp": 0.0,
+   "path_match_pct": 100.0,
+   "n_rows": 30
+  }
+ },
+ {
+  "id": "d1791562108360",
+  "t": 1791562108.360806,
+  "scenario": {
+   "id": "link:r2-r5",
+   "kind": "link",
+   "label": "Link r2-r5 fails",
+   "links": [
+    "r2-r5"
+   ],
+   "nodes": []
+  },
+  "mode": "intent",
+  "plan": "P1",
+  "intents": [
+   {
+    "intent": "I1",
+    "predicted": "held",
+    "measured": "held",
+    "match": true
+   },
+   {
+    "intent": "I2",
+    "predicted": "violated",
+    "measured": "violated",
+    "match": true
+   },
+   {
+    "intent": "I3",
+    "predicted": "held",
+    "measured": "held",
+    "match": true
+   },
+   {
+    "intent": "I4",
+    "predicted": "held",
+    "measured": "held",
+    "match": true
+   },
+   {
+    "intent": "I5",
+    "predicted": "held",
+    "measured": "held",
+    "match": true
+   }
+  ],
+  "intent_accuracy": 100.0,
+  "paths_match_fluid": true,
+  "paths_match_packet": true,
+  "summary_fluid": {
+   "aggregate_throughput_err": 0.01666388935175955,
+   "aggregate_loss_err_pp": 0.0,
+   "latency_mape": 3.6685114382479633,
+   "latency_p50_mape": 1.7541491687234396,
+   "latency_p95_mape": 3.8706632822824645,
+   "throughput_mape": 0.020824656393161674,
+   "loss_mae_pp": 0.0,
+   "probe_loss_mae_pp": 0.0,
+   "path_match_pct": 100.0,
+   "n_rows": 30
+  },
+  "summary_packet": {
+   "aggregate_throughput_err": 0.053657723712701985,
+   "aggregate_loss_err_pp": 0.0,
+   "latency_mape": 2.4667027920445417,
+   "latency_p50_mape": 1.256330154966406,
+   "latency_p95_mape": 2.7229493941856306,
+   "throughput_mape": 0.09371720116618155,
+   "loss_mae_pp": 0.0,
+   "probe_loss_mae_pp": 0.0,
+   "path_match_pct": 100.0,
+   "n_rows": 30
+  }
+ },
+ {
+  "id": "d1791562333454",
+  "t": 1791562333.4546201,
+  "scenario": {
+   "id": "link:r2-r5",
+   "kind": "link",
+   "label": "Link r2-r5 fails",
+   "links": [
+    "r2-r5"
+   ],
+   "nodes": []
+  },
+  "mode": "intent",
+  "plan": "P2",
+  "intents": [
+   {
+    "intent": "I1",
+    "predicted": "held",
+    "measured": "held",
+    "match": true
+   },
+   {
+    "intent": "I2",
+    "predicted": "held",
+    "measured": "held",
+    "match": true
+   },
+   {
+    "intent": "I3",
+    "predicted": "held",
+    "measured": "held",
+    "match": true
+   },
+   {
+    "intent": "I4",
+    "predicted": "held",
+    "measured": "held",
+    "match": true
+   },
+   {
+    "intent": "I5",
+    "predicted": "held",
+    "measured": "held",
+    "match": true
+   }
+  ],
+  "intent_accuracy": 100.0,
+  "paths_match_fluid": true,
+  "paths_match_packet": true,
+  "summary_fluid": {
+   "aggregate_throughput_err": 0.0,
+   "aggregate_loss_err_pp": 0.0,
+   "latency_mape": 3.4168424193165414,
+   "latency_p50_mape": 1.6159664954324056,
+   "latency_p95_mape": 3.560124405641461,
+   "throughput_mape": 0.0,
+   "loss_mae_pp": 0.0,
+   "probe_loss_mae_pp": 0.0,
+   "path_match_pct": 100.0,
+   "n_rows": 26
+  },
+  "summary_packet": {
+   "aggregate_throughput_err": 0.12000000000000159,
+   "aggregate_loss_err_pp": 0.0,
+   "latency_mape": 2.895930814209823,
+   "latency_p50_mape": 1.4616831250474274,
+   "latency_p95_mape": 3.1197177794903914,
+   "throughput_mape": 0.1599999999999972,
+   "loss_mae_pp": 0.0,
+   "probe_loss_mae_pp": 0.0,
+   "path_match_pct": 100.0,
+   "n_rows": 26
+  }
+ }
+]

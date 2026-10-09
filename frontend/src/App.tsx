@@ -3,6 +3,8 @@ import CopilotDrawer from "./components/Copilot";
 import Header, { type Page } from "./components/Header";
 import { useStore } from "./lib/store";
 import AIPage from "./pages/AIPage";
+import AssurePage from "./pages/AssurePage";
+import DesignerPage from "./pages/DesignerPage";
 import JourneyPage from "./pages/JourneyPage";
 import LivePage from "./pages/LivePage";
 import MetricsPage from "./pages/MetricsPage";
@@ -10,7 +12,7 @@ import ScenariosPage from "./pages/ScenariosPage";
 import SimulatePage from "./pages/SimulatePage";
 import ValidationPage from "./pages/ValidationPage";
 
-const PAGES: Page[] = ["live", "simulate", "validation", "ai", "metrics", "journey", "scenarios"];
+const PAGES: Page[] = ["live", "assure", "design", "simulate", "validation", "ai", "metrics", "journey", "scenarios"];
 
 function pageFromHash(): Page {
   const h = location.hash.replace("#", "").split("?")[0] as Page;
@@ -33,11 +35,13 @@ export default function App() {
       <main className="min-h-0 flex-1 overflow-auto">
         {status === "error" ? (
           <StartupError error={error} />
-        ) : !topology || !snap ? (
+        ) : !topology || !snap || status === "restarting" || status === "starting" ? (
           <Booting status={status} />
         ) : (
           <>
             {page === "live" && <LivePage />}
+            {page === "assure" && <AssurePage />}
+            {page === "design" && <DesignerPage />}
             {page === "simulate" && <SimulatePage />}
             {page === "validation" && <ValidationPage />}
             {page === "ai" && <AIPage />}
@@ -67,11 +71,13 @@ function Booting({ status }: { status: string }) {
   const conn = useStore((s) => s.conn);
   return (
     <div className="mx-auto mt-24 max-w-xl px-6">
-      <h1 className="font-cond text-2xl font-semibold">Starting the emulated network</h1>
+      <h1 className="font-cond text-2xl font-semibold">{status === "restarting" ? "Deploying the new topology" : "Starting the emulated network"}</h1>
       <p className="mt-2 text-ink-2">
         {conn !== "open"
           ? "Waiting for the NETVISTA backend on this machine. Start it with scripts/run.ps1 (Windows) or sudo scripts/run.sh (Linux)."
-          : `Backend is ${status}. Mininet is creating namespaces, links and queues; this takes a few seconds.`}
+          : status === "restarting"
+            ? "The running network is being torn down (probe agents, iperf3, Mininet namespaces and Open vSwitch bridges), then the new design boots as real Linux routers. This takes 10 to 30 seconds."
+            : `Backend is ${status}. Mininet is creating namespaces, links and queues; this takes a few seconds.`}
       </p>
       <ul className="mt-6 space-y-1 text-[13px] text-ink-3">
         {events.slice(-6).map((e) => (

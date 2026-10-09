@@ -436,6 +436,97 @@ class Toolbox:
         label = "Start the default iperf3 traffic profile" if action == "start" else "Stop all background iperf3 traffic"
         return self.proposals.add(self.conversation_id, "traffic", {"action": action}, label, a.get("reason"))
 
+    # ------------------------------------------------------------------ assure (intents, resilience, plans)
+    def _assure(self):
+        a = self.rt.extensions.get("assure")
+        if a is None:
+            raise ValueError("the Assure service is not available")
+        return a
+
+    def get_intents(self, _: dict) -> dict:
+        a = self._assure()
+        rows = []
+        for it in a.intent_rows(timeline_s=0):
+            bad = [c for c in it["checks"] if c["ok"] is False] or [c for c in it["checks"] if c["at_risk"]]
+            res = it.get("resilience") or {}
+            rows.append({
+                "id": it["id"], "intent": it["label"], "priority": it["priority"], "enabled": it["enabled"], "status_now": it["status"],
+                "worst_check": None if not bad else {k: bad[0][k] for k in ("subject", "value", "limit", "unit")},
+                "met_last_5min_pct": it["compliance"]["5m"]["compliance_pct"],
+                "predicted_under_single_failures": None if it["protect"] == "none" or not res else {
+                    "must_survive": it["protect"], "holds_in": res.get("held"), "of_failures": res.get("scenarios"),
+                    "breaks_after": res.get("broken"), "avoidable_by_better_routing": res.get("avoidable"),
+                    "unavoidable_by_any_routing": res.get("unavoidable"), "flow_cut_off": res.get("unprotectable"),
+                },
+            })
+        ctrl = self.rt.controller
+        return {"intents": rows, "routing_mode": ctrl.mode, "plan_in_use": (ctrl.route_plan or {}).get("id"),
+                "autopilot": a.autopilot.mode,
+                "note": "status_now is measured live every second; predicted_* comes from the fluid twin (a SIMULATION)"}
+
+    def get_resilience(self, a_: dict) -> dict:
+        a = self._assure()
+        res = a.run_resilience(record=False) if a_.get("refresh") or not a.resilience else a.resilience
+        sid = a_.get("scenario")
+        rows = res["scenarios"]
+        if sid:
+            rows = [r for r in rows if r["scenario"]["id"] == sid or r["scenario"]["label"].lower() == str(sid).lower()]
+            if not rows:
+                raise KeyError(f"unknown failure {sid!r}; use ids like link:r2-r5 or node:r2")
+        topo = self.rt.topo
+        out = []
+        for row in rows:
+            item = {"failure": row["scenario"]["id"], "breaks": row["violated"], "avoidable": row["avoidable"],
+                    "unavoidable": row["unavoidable"], "flows_cut_off": row["unreachable"], "flows_moved": row["moved"],
+                    "peak_load_pct": r(row["max_util"] * 100, 0), "lost_mbps": row["lost_mbps"]}
+            if sid:
+                item["paths_after"] = {p: core_path(topo, path) for p, path in row["paths"].items()}
+                item["rtt_p95_after_ms"] = {p: r(v) for p, v in row["rtt"].items()}
+                if row.get("best"):
+                    item["best_routing_still_breaks"] = row["best"]["violated"]
+            out.append(item)
+        return {
+            "label": "SIMULATION: fluid-twin prediction for every single failure, with the routing in use now",
+            "routing_mode": res["mode"], "plan": res.get("plan"), "score_pct": res["score"], "best_possible_pct": res.get("score_best"),
+            "analysed_s_ago": self._age(res["t"]), "failures": out,
+            "single_points_of_failure": [x["label"] for x in res.get("spofs", [])],
+        }
+
+    def make_plan(self, _: dict) -> dict:
+        a = self._assure()
+        plan = a.make_plan(source="copilot")
+        topo = self.rt.topo
+        return {
+            "label": "SIMULATION: a plan computed by the planner; NOT applied",
+            "plan_id": plan["id"], "summary": plan["label"],
+            "primary_paths": {p: core_path(topo, path) for p, path in plan["primary"].items()}, "flows_moved": plan["moved"],
+            "resilience_now_pct": plan["resilience_before"]["score"], "resilience_with_plan_pct": plan["resilience_after"]["score"],
+            "best_possible_pct": plan["resilience_after"].get("score_best"),
+            "intents_with_plan": {x["intent"]: x["status"] for x in plan["predicted"]["intents"]},
+            "rtt_p95_with_plan_ms": {p: r(v["rtt_p95"]) for p, v in plan["predicted"]["pairs"].items()},
+            "searched": f"{plan['search']['evaluations']} routings in {plan['search']['wall_s']} s ({plan['search']['method']})",
+            "next": "call propose_plan with this plan_id if the user wants it applied",
+        }
+
+    def propose_intent(self, a_: dict) -> dict:
+        from ...assure.intents import IntentError, validate_intent
+
+        a = self._assure()
+        raw = {k: a_.get(k) for k in ("kind", "flows", "links", "params", "protect", "priority", "note") if a_.get(k) is not None}
+        raw["id"] = "new"
+        try:
+            it = validate_intent(raw, self.rt.topo, a.pairs, a.core)
+        except IntentError as e:
+            raise ValueError(str(e)) from e
+        spec = {k: v for k, v in it.to_dict().items() if k in ("kind", "flows", "links", "params", "protect", "priority", "note")}
+        return self.proposals.add(self.conversation_id, "intent_add", spec, f"Add intent: {it.label}", a_.get("reason"))
+
+    def propose_plan(self, a_: dict) -> dict:
+        a = self._assure()
+        plan = a.get_plan(str(a_.get("plan_id") or ""))
+        label = f"Apply plan {plan['id']}: {plan['label']} (resilience {plan['resilience_before']['score']}% → {plan['resilience_after']['score']}%)"
+        return self.proposals.add(self.conversation_id, "plan_apply", {"plan_id": plan["id"]}, label, a_.get("reason"))
+
     # ------------------------------------------------------------------ registry
     def _build(self) -> list[Tool]:
         reason = {"type": "string", "description": "one sentence: why you propose it"}
@@ -503,6 +594,36 @@ class Toolbox:
             Tool("propose_traffic", "propose", "Propose starting or stopping the default iperf3 traffic. NOT executed.",
                  _obj({"action": {"type": "string", "enum": ["start", "stop"]}, "reason": reason}, ["action"]),
                  self.propose_traffic, local=False, label=lambda a: "Proposed a traffic change"),
+            Tool("get_intents", "read",
+                 "The operator's intents (SLOs and policies): whether each holds now (measured), how often it held in the last 5 min, "
+                 "and whether it is predicted to survive single failures (avoidable vs unavoidable breaks).",
+                 _obj(), self.get_intents, label=lambda a: "Read the intents"),
+            Tool("get_resilience", "read",
+                 "Failure analysis (SIMULATION): for every single link/router failure, which intents break with the routing in use, "
+                 "whether a better routing could avoid it, flows cut off. Give scenario (e.g. link:r2-r5, node:r2) for paths and RTT "
+                 "after that failure; refresh=true to recompute.",
+                 _obj({"scenario": {"type": "string", "description": "optional: link:<id> or node:<router>"},
+                       "refresh": {"type": "boolean"}}), self.get_resilience,
+                 label=lambda a: "Read the failure analysis" + (f" ({a['scenario']})" if a.get("scenario") else "")),
+            Tool("make_plan", "simulate",
+                 "Run the intent planner (about a second): the best paths for every flow plus pre-planned backups for each failure, "
+                 "with resilience before/after. Nothing is applied; use propose_plan to offer it to the user.",
+                 _obj(), self.make_plan, local=False, label=lambda a: "Planned routes for the intents (simulation)"),
+            Tool("propose_intent", "propose",
+                 "Propose a new intent. kind: reach|latency|loss|bandwidth|avoid|waypoint|max_util|disjoint; flows: pairs like c1>srv1 or "
+                 "['*']; params: latency {stat:p50|p95|p99, max_ms}, loss {max_pct}, bandwidth {min_mbps}, avoid {elements:[r3 or r2-r5]}, "
+                 "waypoint {node}, max_util {max_pct} (with links: ['*'] or ids), disjoint {nodes:bool} (exactly two flows); "
+                 "protect: none|link|node|any (must also hold after a single failure); priority: critical|high|normal. "
+                 "NOT added until the user applies it.",
+                 _obj({"kind": {"type": "string"}, "flows": {"type": "array", "items": {"type": "string"}},
+                       "links": {"type": "array", "items": {"type": "string"}}, "params": {"type": "object"},
+                       "protect": {"type": "string", "enum": ["none", "link", "node", "any"]},
+                       "priority": {"type": "string", "enum": ["critical", "high", "normal"]}, "note": {"type": "string"},
+                       "reason": reason}, ["kind"]),
+                 self.propose_intent, label=lambda a: "Proposed an intent"),
+            Tool("propose_plan", "propose", "Propose applying a plan made by make_plan (by plan_id). NOT executed: the user decides.",
+                 _obj({"plan_id": {"type": "string"}, "reason": reason}, ["plan_id"]), self.propose_plan, local=False,
+                 label=lambda a: f"Proposed plan {a.get('plan_id', '')}"),
         ]
 
 

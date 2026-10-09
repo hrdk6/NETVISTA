@@ -275,6 +275,13 @@ class Copilot:
                     w = p.spec["weights"]
                     rt.controller.set_weights(w["latency"], w["loss"], w["util"])
                 result = {"mode": rt.controller.mode, "weights": rt.controller.weights.to_dict()}
+            elif p.action == "intent_add":
+                it = rt.extensions["assure"].intents.add(p.spec, source="copilot (approved by the user)")
+                rt.events.emit("intent.add", f"Intent {it.id} added: {it.label}", intent=it.id)
+                result = {"intent_id": it.id, "label": it.label}
+            elif p.action == "plan_apply":
+                plan = rt.extensions["assure"].apply_plan(p.spec["plan_id"], source="copilot (approved by the user)")
+                result = {"plan_id": plan["id"], "status": plan["status"]}
             elif p.action == "traffic":
                 if p.spec["action"] == "start":
                     result = {"started": [f["pair"] for f in rt.start_default_traffic()]}

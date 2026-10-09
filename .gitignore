@@ -10,3 +10,4 @@ runs/
 .env
 *.tsbuildinfo
 .playwright-mcp/
+.idea/

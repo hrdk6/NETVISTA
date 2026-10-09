@@ -1,4 +1,4 @@
-"""Attach the Phase 4/5 services (simulator, validation, scenarios, demo) and the AIOps layer to a Runtime."""
+"""Attach the Phase 4/5 services (simulator, validation, scenarios, demo), the AIOps layer and Assure to a Runtime."""
 
 from __future__ import annotations
 
@@ -17,5 +17,8 @@ def attach_services(rt) -> None:
     from .ai.service import AIService
 
     rt.extensions["ai"] = AIService(rt)
+    from .assure.service import AssureService
+
+    rt.extensions["assure"] = AssureService(rt)
     # calibrate once the probes have ~15 s of calm, unloaded data (before anyone starts traffic)
     sim.auto_calibrate(delay_s=15.0)

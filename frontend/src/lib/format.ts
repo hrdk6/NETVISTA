@@ -49,5 +49,11 @@ export function ago(t: number | null | undefined, now = Date.now() / 1000): stri
 
 export const pairLabel = (pair: string) => pair.replace(">", " → ");
 export const pathLabel = (p: string[] | null | undefined) => (p && p.length ? p.join(" – ") : dash);
+// router ids of the deployed topology (set when it loads); any topology file may name routers freely
+let ROUTERS: Set<string> | null = null;
+export function setRouterIds(ids: string[]) {
+  ROUTERS = new Set(ids);
+}
+export const isRouter = (id: string) => (ROUTERS ? ROUTERS.has(id) : /^r\d/.test(id));
 /** Only the router part of a path: c1-sw1-r1-r2-r5-sw2-srv1 -> r1 r2 r5 */
-export const corePath = (p: string[] | null | undefined) => (p ? p.filter((n) => /^r\d/.test(n)).join(" · ") : dash);
+export const corePath = (p: string[] | null | undefined) => (p ? p.filter(isRouter).join(" · ") : dash);

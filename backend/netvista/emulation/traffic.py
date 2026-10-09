@@ -38,6 +38,11 @@ def parse_iperf_interval(line: str) -> dict | None:
     t0, t1 = float(m.group(1)), float(m.group(2))
     if t1 - t0 > 1.5 or "receiver" in line or "sender" in line:
         return None  # end-of-test summary, not a 1 s interval
+    lost, total = int(m.group(6)), int(m.group(7))
+    if lost < 0 or lost > total:
+        # seen live after a failure: iperf3 reported 4.9e17 % loss (its sequence-gap counter
+        # wrapped on reordered datagrams). An impossible sample is dropped, not believed.
+        return None
     return {
         "rx_mbps": float(m.group(3)) * _UNIT.get(m.group(4), 1.0),
         "jitter_ms": float(m.group(5)),

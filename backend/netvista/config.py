@@ -58,6 +58,9 @@ class Settings:
     hysteresis: float = 0.15  # switch only if the new path is >=15% better
     hold_down_s: float = 3.0  # minimum time between two voluntary switches of one flow
     k_paths: int = 8
+    # flows moving in the same tick see each other's load (see routing/controller.py)
+    herd_guard: bool = os.environ.get("NETVISTA_HERD_GUARD", "1") != "0"
+    wtr_s: float = 5.0  # intent mode: a restored link must stay up this long before flows return to it
 
     # --- broadcast ---
     ws_interval_s: float = 0.5

@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import math
 import threading
+import uuid
 import time
 from collections import deque
 from typing import Any
@@ -54,6 +55,7 @@ class Runtime:
         self._stop = threading.Event()
         self.net: EmulatedNetwork | None = None
         self.extensions: dict[str, Any] = {}
+        self.boot_id = uuid.uuid4().hex[:10]  # the UI reloads the topology when this changes (redeploy)
 
     # ------------------------------------------------------------------ lifecycle
     def start(self) -> None:
@@ -67,6 +69,7 @@ class Runtime:
         self.chaos.init_network()
 
         self.store = ProbeStore()
+        self.store.on_stall = self._on_host_stall
         ns_intfs: dict[int | None, list[str]] = {}
         for n in topo.nodes:
             ns_intfs.setdefault(self.net.pid(n), []).extend(i.name for i in plan.intfs_of(n))
@@ -92,6 +95,15 @@ class Runtime:
         self.status = "running"
         self.events.emit("system.ready", f"Emulated network is up in {time.time() - t0:.1f}s; probes and controller running", severity="success")
 
+    def _on_host_stall(self, st) -> None:
+        d = (st.end or time.time()) - st.start
+        if st.outage:
+            self.events.emit("telemetry.outage", f"{st.mute}/{st.streams} probe streams were silent together for {d:.1f}s - "
+                             "longer than any host stall, so it was judged as a real outage", severity="warning", **st.to_dict())
+        else:
+            self.events.emit("telemetry.stall", f"Host stall: {st.mute}/{st.streams} probe streams went mute together for {d:.2f}s; "
+                             "not counted against any link, its samples left out of the statistics", **st.to_dict())
+
     def _init_extensions(self) -> None:
         """Phase 4/5 services (simulator, validation, scenarios, demo) plug in here."""
         try:
@@ -102,7 +114,7 @@ class Runtime:
 
     def stop(self) -> None:
         self._stop.set()
-        for name in ("demo", "replayer", "validation", "ai"):
+        for name in ("demo", "replayer", "validation", "assure", "ai"):
             ext = self.extensions.get(name)
             if ext and hasattr(ext, "stop"):
                 try:
@@ -145,6 +157,7 @@ class Runtime:
         flows = {p: self.flow_view(p, rf, now) for p, rf in routing["flows"].items()}
         snap = {
             "t": now,
+            "boot_id": self.boot_id,
             "uptime_s": now - (self.started_at or now),
             "links": links,
             "nodes": nodes,
@@ -153,6 +166,7 @@ class Runtime:
             "chaos": self.chaos.state(),
             "traffic": self.traffic.snapshot(),
             "agents": self.agents.alive(),
+            "host_stalls": self.store.stall_summary(),
         }
         for name, ext in self.extensions.items():
             if hasattr(ext, "status"):

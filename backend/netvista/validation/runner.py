@@ -206,7 +206,10 @@ class ValidationService:
                     return
             # calibrate in the same operating regime the scenarios will be measured in
             self._status["step"] = "calibrating twin (live, under traffic)"
-            sim.calibrate()
+            try:
+                sim.calibrate()
+            except ValueError as e:  # not steady: the previous calibration (or none) stays in use
+                log.warning("calibration before validation failed: %s", e)
             original_mode = rt.controller.mode
             try:
                 for i, sc in enumerate(scenarios):
@@ -237,6 +240,15 @@ class ValidationService:
         rt.events.emit("validation.start", f"Validation {suite_pos[0]}/{suite_pos[1]}: {sc['label']} ({rt.controller.mode} routing)")
         self._status["step"] = "predicting (twin only)"
         pred = sim.predict(sc["changes"], duration_s=duration_s, include_baseline=False)
+        # the fluid model's prediction of the same scenario, so both engines are scored live
+        try:
+            from ..simulator.fluid import run_fluid_prediction
+
+            cfg_f, _ = sim.build_config(sc["changes"], None, None, None, duration_s, 1)
+            fluid = run_fluid_prediction(cfg_f)
+        except Exception:
+            log.exception("fluid prediction failed")
+            fluid = None
         self._status["step"] = "applying live"
         inj_ids = []
         try:
@@ -257,6 +269,12 @@ class ValidationService:
                 except Exception:
                     pass
         rows, summary = compare(pred["result"]["pairs"], meas)
+        rows_f, summary_f = compare(fluid["pairs"], meas) if fluid else ([], {})
+        assure = rt.extensions.get("assure")
+        if assure is not None:
+            assure.pool.add_rows("packet", rows, source=f"validation {sc['label']}")
+            if rows_f:
+                assure.pool.add_rows("fluid", rows_f, source=f"validation {sc['label']}")
         run = {
             "id": f"v{int(time.time() * 1000)}",
             "t": time.time(),
@@ -273,6 +291,10 @@ class ValidationService:
             "measured": meas,
             "rows": rows,
             "summary": summary,
+            "predicted_fluid": fluid["pairs"] if fluid else None,
+            "fluid_wall_s": fluid["wall_s"] if fluid else None,
+            "rows_fluid": rows_f,
+            "summary_fluid": summary_f,
         }
         self.runs.append(run)
         try:

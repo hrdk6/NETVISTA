@@ -45,6 +45,15 @@ def paths() -> dict[str, str]:
     return {p: "-".join(f["path"] or []) for p, f in get("/api/routing")["flows"].items()}
 
 
+def last_incident() -> int:
+    return max((i["id"] for i in get("/api/routing")["incidents"]), default=0)
+
+
+def new_incidents(after_id: int) -> list[dict]:
+    # by id, not by position: the API returns only the latest 30 incidents
+    return [i for i in get("/api/routing")["incidents"] if i["id"] > after_id and i["kind"] == "failure"]
+
+
 def wait_health(timeout: float = 90) -> None:
     t0 = time.time()
     while time.time() - t0 < timeout:
@@ -66,6 +75,7 @@ def main() -> int:
     URL = a.url.rstrip("/")
     wait_health()
     post("/api/chaos/revert_all")
+    post("/api/traffic/stop")  # the baseline is measured on a quiet network, whatever ran before
     post("/api/routing/mode", {"mode": "adaptive"})
     time.sleep(3)
 
@@ -78,7 +88,7 @@ def main() -> int:
     check(all(s["agents"].values()), "all probe agents alive")
 
     print("2. Real traffic (iperf3)")
-    post("/api/traffic/start")
+    post("/api/traffic/start")  # the default 6 Mbit/s per flow
     time.sleep(6)
     s = get("/api/state")
     for pair in ("c1>srv1", "c2>srv2"):
@@ -89,12 +99,12 @@ def main() -> int:
 
     print("3. Link failure r2-r5 (adaptive routing)")
     before = paths()
-    n0 = len(get("/api/routing")["incidents"])
+    n0 = last_incident()
     post("/api/chaos/inject", {"kind": "link_down", "target": "r2-r5"})
     time.sleep(5)
     after = paths()
     check(all("r2-r5" not in p for p in after.values()), f"no flow uses r2-r5 any more: {after}")
-    incs = [i for i in get("/api/routing")["incidents"][n0:] if i["kind"] == "failure"]
+    incs = new_incidents(n0)
     check(bool(incs), "failure incidents recorded")
     for i in incs:
         print(f"        {i['pair']}: detection {i['detection_ms']} ms, reroute {i['reroute_ms']} ms, recovery {i['recovery_ms']} ms")
@@ -103,12 +113,13 @@ def main() -> int:
     time.sleep(6)
 
     print("4. Router crash r2")
-    n0 = len(get("/api/routing")["incidents"])
+    n0 = last_incident()
     post("/api/chaos/inject", {"kind": "node_down", "target": "r2"})
     time.sleep(6)
     after = paths()
     check(all("-r2-" not in p for p in after.values()), f"no flow crosses r2: {after}")
-    incs = [i for i in get("/api/routing")["incidents"][n0:] if i["kind"] == "failure"]
+    incs = new_incidents(n0)
+    check(bool(incs), "failure incidents recorded")
     reroutes = {}
     for i in incs:
         reroutes[i["pair"]] = reroutes.get(i["pair"], 0) + 1
@@ -172,6 +183,33 @@ def main() -> int:
           f"subtle +2 ms on r2-r5 diagnosed as '{found and found['title']}' after {time.time() - t0:.1f} s (threshold health says '{health}')")
     post(f"/api/chaos/revert/{inj['id']}")
     print(f"     copilot: {st['copilot']['label']}" + ("" if st["copilot"]["available"] else f" ({st['copilot']['reason']})"))
+
+    print("8. Assure: intents, failure analysis, plan, verification, drill")
+    intents = post("/api/assure/intents/preset", {"name": "gold-bronze", "replace": True})
+    check(len(intents) >= 4, f"gold/bronze preset loaded: {len(intents)} intents")
+    time.sleep(4)
+    rows = get("/api/assure/intents")
+    check(all(r["status"] in ("ok", "at_risk") for r in rows), "every intent met with the default traffic: " + ", ".join(f"{r['id']} {r['status']}" for r in rows))
+    res = post("/api/assure/resilience", {"double": False})
+    check(len(res["scenarios"]) == 12 and res["score"] is not None, f"failure analysis: 12 single failures in {res['wall_s']:.2f} s, {res['score']}% hold (best {res['score_best']}%)")
+    check({s["scenario"] for s in res["spofs"]} == {"node:r1", "node:r5"}, "single points of failure are the two site gateways")
+    plan = post("/api/assure/plan")
+    check(plan["resilience_after"]["score"] >= plan["resilience_before"]["score"], f"plan {plan['id']}: resilience {plan['resilience_before']['score']}% -> {plan['resilience_after']['score']}%")
+    post(f"/api/assure/plans/{plan['id']}/apply")
+    t0, verdict = time.time(), None
+    while time.time() - t0 < 45 and verdict is None:
+        time.sleep(2)
+        verdict = (get(f"/api/assure/plans/{plan['id']}").get("verification") or {}).get("verdict")
+    check(verdict == "verified", f"plan {plan['id']} verified on live measurements after {time.time() - t0:.0f} s ({verdict})")
+    time.sleep(3)
+    post("/api/assure/drill", {"scenario": "link:r2-r5"})
+    t0 = time.time()
+    while time.time() - t0 < 90 and get("/api/state")["jobs"]["assure"]["drill"].get("running"):
+        time.sleep(2)
+    d = get("/api/assure/drills")[0]
+    check(d["paths_match_fluid"], f"drill r2-r5 ({d['mode']}): backup paths as predicted")
+    check((d["intent_accuracy"] or 0) >= 99, f"drill r2-r5: {d['intent_accuracy']}% of intent outcomes as predicted")
+    post("/api/assure/plan/clear", {"mode": "adaptive"})
 
     print()
     print("ALL CHECKS PASSED" if not FAILS else f"{len(FAILS)} CHECK(S) FAILED")

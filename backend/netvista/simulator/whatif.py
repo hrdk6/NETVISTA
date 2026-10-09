@@ -53,12 +53,20 @@ def simulate(cfg: dict[str, Any], paths: dict[str, list[str]], duration: float, 
 
 
 def decide_paths(cfg: dict, paths: dict[str, list[str]], pilot: dict) -> tuple[dict[str, list[str]], dict[str, Any]]:
-    """Apply the live controller's decision rule to simulated link metrics."""
+    """Apply the live controller's decision rule to simulated link metrics.
+
+    Flows decide one after another against the same measured link rates, exactly like the
+    live controller in one tick. With cfg["herd_guard"] the rates are corrected for the flows
+    that already moved in this round (the live controller's herd guard does the same), so
+    several flows leaving one path cannot all pile onto the same alternative.
+    """
     routers = set(cfg["routers"])
     w = Weights(**cfg["weights"])
     hyst = cfg.get("hysteresis", 0.15)
+    herd_guard = bool(cfg.get("herd_guard", False))
     wire_factor = cfg.get("wire_bytes", 1242) / cfg.get("payload_bytes", 1200)
     new_paths, decisions = dict(paths), {}
+    moved: dict[tuple[str, str], float] = {}  # directed hop -> bit/s added (+) or removed (-) this round
     for pair, p in cfg["pairs"].items():
         own = p.get("offered_mbps", 0.0) * 1e6 * wire_factor
         cur_hops = set(_core_hops(paths[pair], routers))
@@ -74,13 +82,19 @@ def decide_paths(cfg: dict, paths: dict[str, list[str]], pilot: dict) -> tuple[d
                 lat = d["probe_latency_ms"]
                 if lat is None:
                     lat = L["delay_ms"] + d["queue_ms"] + PROBE_WIRE_BYTES * 8 / cap * 1000
-                base = max(0.0, d["rate_bps"] - (own if (u, v) in cur_hops else 0.0))
-                util = max((base + own) / cap, rev["rate_bps"] / cap)
+                rate = d["rate_bps"] + moved.get((u, v), 0.0)
+                base = max(0.0, rate - (own if (u, v) in cur_hops else 0.0))
+                util = max((base + own) / cap, (rev["rate_bps"] + moved.get((v, u), 0.0)) / cap)
                 hops.append(HopMetrics(lid, u, v, lat, d["loss_frac"], util, bool(L.get("up", True))))
             evals.append(evaluate(cand, hops, w))
         cur = next((e for e in evals if e.path == paths[pair]), None)
         chosen, reason = decide(cur, evals, hyst, True)
         if chosen is not None:
+            if herd_guard and own > 0 and chosen.path != paths[pair]:
+                for hop in _core_hops(paths[pair], routers):
+                    moved[hop] = moved.get(hop, 0.0) - own
+                for hop in _core_hops(chosen.path, routers):
+                    moved[hop] = moved.get(hop, 0.0) + own
             new_paths[pair] = chosen.path
         decisions[pair] = {
             "reason": reason,
@@ -91,21 +105,33 @@ def decide_paths(cfg: dict, paths: dict[str, list[str]], pilot: dict) -> tuple[d
 
 
 def run_prediction(cfg: dict[str, Any]) -> dict[str, Any]:
+    out = predict_with(cfg, simulate)
+    out["engine"] = "packet"
+    return out
+
+
+def predict_with(cfg: dict[str, Any], sim) -> dict[str, Any]:
+    """The routing prediction loop + result shaping, for either engine.
+
+    sim(cfg, paths, duration_s, seed) -> results shaped like simulate(): the packet-level SimPy
+    model, or the fluid model (fluid.py). Modes: static (Dijkstra paths), adaptive (the
+    controller's scoring rule, up to 3 rounds), fixed (the paths in cfg, e.g. a plan).
+    """
     t0 = time.perf_counter()
     start_paths = {p: v["path"] for p, v in cfg["pairs"].items()}
     paths = dict(start_paths)
     rounds: list[dict] = []
     if cfg.get("mode") == "static":
         paths = {p: v["static_path"] for p, v in cfg["pairs"].items()}
-    else:
+    elif cfg.get("mode") != "fixed":
         for i in range(3):
-            pilot = simulate(cfg, paths, min(cfg["duration_s"], 6.0), cfg.get("seed", 1) + 101 + i)
+            pilot = sim(cfg, paths, min(cfg["duration_s"], 6.0), cfg.get("seed", 1) + 101 + i)
             new_paths, decisions = decide_paths(cfg, paths, pilot)
             rounds.append(decisions)
             if new_paths == paths:
                 break
             paths = new_paths
-    res = simulate(cfg, paths, cfg["duration_s"], cfg.get("seed", 1))
+    res = sim(cfg, paths, cfg["duration_s"], cfg.get("seed", 1))
 
     pairs_out = {}
     for pair, p in cfg["pairs"].items():

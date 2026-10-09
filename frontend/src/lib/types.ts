@@ -169,7 +169,7 @@ export interface Incident {
 }
 
 export interface RoutingState {
-  mode: "static" | "adaptive";
+  mode: "static" | "adaptive" | "intent";
   weights: { latency: number; loss: number; util: number };
   hysteresis: number;
   hold_down_s: number;
@@ -180,6 +180,10 @@ export interface RoutingState {
   flows: Record<string, RoutingFlow>;
   incidents: Incident[];
   tick_ms: number;
+  herd_guard?: boolean;
+  wtr_s?: number;
+  scenario?: string | null;
+  plan?: { id: string; label: string; primary: Record<string, string[]>; protected: string[]; applied_t: number; applied_by: string } | null;
 }
 
 export interface Injection {
@@ -208,8 +212,19 @@ export interface TrafficFlow {
   latest: { t: number; rx_mbps: number; loss_pct: number; jitter_ms: number } | null;
 }
 
+/** Moments when every probe stream went mute together: the host's packet path froze (DESIGN.md 11.10). */
+export interface HostStalls {
+  count: number;
+  total_s: number;
+  longest_s: number | null;
+  median_period_s: number | null;
+  excluded_samples: number;
+  active: { start: number; streams: number; mute: number } | null;
+}
+
 export interface Snapshot {
   t: number;
+  boot_id?: string;
   uptime_s: number;
   links: Record<string, LinkView>;
   nodes: Record<string, NodeView>;
@@ -223,8 +238,10 @@ export interface Snapshot {
   };
   traffic: TrafficFlow[];
   agents: Record<string, boolean>;
+  host_stalls?: HostStalls;
   jobs?: Record<string, Record<string, unknown>>;
   ai?: AISnapshot;
+  assure?: import("./assure").AssureSnapshot;
 }
 
 export interface NvEvent {
@@ -351,6 +368,10 @@ export interface ValidationRun {
   sim_wall_s: number;
   calibration_t: number | null;
   rows: ValidationRow[];
+  /** the fluid model's prediction of the same scenario, scored against the same measurement */
+  rows_fluid?: ValidationRow[];
+  summary_fluid?: Partial<ValidationRun["summary"]>;
+  fluid_wall_s?: number | null;
   summary: {
     latency_mape: number | null;
     latency_p50_mape: number | null;
@@ -521,7 +542,7 @@ export interface SignalPoint {
 export interface Proposal {
   id: string;
   conversation_id: string | null;
-  action: "chaos_inject" | "chaos_revert" | "routing" | "traffic";
+  action: "chaos_inject" | "chaos_revert" | "routing" | "traffic" | "intent_add" | "plan_apply";
   spec: Record<string, unknown>;
   label: string;
   reason: string | null;

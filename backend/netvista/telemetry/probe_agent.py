@@ -5,8 +5,12 @@
 * Sends one probe per --interval to every target; each probe carries (target, seq, send time).
 * An echo returning computes RTT with the agent's own monotonic clock (no clock sync needed).
 * A probe with no echo after --timeout is reported as lost.
-* Results are streamed to stdout as JSON lines, one line per tick:
-      {"t": <wall time>, "s": <last seq>, "r": [[target_idx, seq, rtt_ms], ...], "l": [[target_idx, seq], ...]}
+* Results are streamed to stdout as JSON lines, one line per tick, even when there is nothing
+  to report (the backend uses the line's time as "observed until"; see health.ProbeStream):
+      {"t": <wall time>, "s": <last seq>, "r": [[target_idx, seq, rtt_ms, wall time received], ...],
+       "l": [[target_idx, seq], ...]}
+  Every namespace shares the kernel's clock, so the agent's wall times are directly comparable
+  with the backend's.
 * Exits when stdin closes (i.e. when the NETVISTA backend dies), so no orphans are left behind.
 """
 
@@ -99,7 +103,7 @@ def main() -> None:
                 if pending.pop((idx, seq), None) is None:
                     continue  # late echo of a probe already declared lost, or a duplicate
             with rlock:
-                replies.append([idx, seq, round((now - sent) / 1e6, 4)])
+                replies.append([idx, seq, round((now - sent) / 1e6, 4), round(time.time(), 4)])
 
     threading.Thread(target=recv_loop, daemon=True).start()
 
@@ -108,7 +112,6 @@ def main() -> None:
     timeout_ns = int(args.timeout * 1e9)
     seq = 0
     next_t = time.monotonic()
-    last_emit = 0.0
     while True:
         seq += 1
         now = time.monotonic_ns()
@@ -128,10 +131,7 @@ def main() -> None:
         with rlock:
             got = replies[:]
             replies.clear()
-        wall = time.time()
-        if got or expired or wall - last_emit > 1.0:
-            emit({"t": wall, "s": seq, "r": got, "l": [list(k) for k in expired]})
-            last_emit = wall
+        emit({"t": round(time.time(), 4), "s": seq, "r": got, "l": [list(k) for k in expired]})
         next_t += args.interval
         delay = next_t - time.monotonic()
         if delay > 0:

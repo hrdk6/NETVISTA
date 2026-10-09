@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import itertools
 import json
 import logging
 import re
@@ -20,8 +21,24 @@ from ..chaos import ChaosError
 from ..config import Settings
 from ..journey import NoPathError, packet_journey
 from ..runtime import Runtime, sanitize
+from ..topology import topology_from_dict
+from ..topology.library import design_report, list_topologies
+from ..topology.library import read as read_topology
+from ..topology.library import resolve as resolve_topology
+from ..topology.library import save as save_topology
 
 log = logging.getLogger(__name__)
+
+
+def _cleanup_mininet() -> None:
+    """What scripts/run.sh does before a start: no agent, iperf3 or Mininet leftovers."""
+    import subprocess
+
+    for cmd in (["pkill", "-f", "netvista-agent"], ["pkill", "-x", "iperf3"], ["mn", "-c"]):
+        try:
+            subprocess.run(cmd, capture_output=True, timeout=90)
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------- schemas
@@ -88,6 +105,60 @@ class ChatReq(BaseModel):
     context: str | None = Field(default=None, max_length=600)
 
 
+class IntentReq(BaseModel):
+    kind: str
+    flows: list[str] = Field(default_factory=list)
+    links: list[str] = Field(default_factory=list)
+    params: dict[str, Any] = Field(default_factory=dict)
+    protect: str = "none"
+    priority: str = "normal"
+    enabled: bool = True
+    note: str = ""
+
+
+class IntentPatch(BaseModel):
+    kind: str | None = None
+    flows: list[str] | None = None
+    links: list[str] | None = None
+    params: dict[str, Any] | None = None
+    protect: str | None = None
+    priority: str | None = None
+    enabled: bool | None = None
+    note: str | None = None
+
+
+class PresetReq(BaseModel):
+    name: str
+    replace: bool = True
+
+
+class ResilienceReq(BaseModel):
+    double: bool = False
+
+
+class ToggleReq(BaseModel):
+    on: bool
+
+
+class DrillReq(BaseModel):
+    scenario: str
+
+
+class BenchmarkReq(BaseModel):
+    strategies: list[str] | None = None
+    scenarios: list[str] | None = None
+    rates: dict[str, float] | None = None
+
+
+class TopologyReq(BaseModel):
+    topology: dict[str, Any]
+
+
+class DeployReq(BaseModel):
+    file: str | None = None
+    topology: dict[str, Any] | None = None
+
+
 # ---------------------------------------------------------------------------- app
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings()
@@ -127,11 +198,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         for ws in dead:
             clients.discard(ws)
 
-    @asynccontextmanager
-    async def lifespan(app: FastAPI):
-        rt = Runtime(settings)
-        state["runtime"] = rt
-        task = asyncio.create_task(broadcaster())
+    async def boot(rt: Runtime) -> None:
         try:
             await asyncio.to_thread(rt.start)
         except Exception as e:
@@ -139,11 +206,51 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             rt.status = "error"
             rt.error = f"{type(e).__name__}: {e}"
             rt.events.emit("system.error", f"Emulation failed to start: {rt.error}", severity="error")
+
+    deploy_lock = asyncio.Lock()
+
+    async def redeploy(path) -> None:
+        """Stop the running emulation and boot another topology in the same process."""
+        async with deploy_lock:
+            old: Runtime | None = state["runtime"]
+            if old is not None:
+                old.events.emit("system.redeploy", f"Redeploying: stopping '{old.topo.name}' to boot {path.name}", severity="warn")
+                old.status = "restarting"
+                await asyncio.to_thread(old.stop)
+                old.status = "restarting"
+            # leftovers of the old network (namespaces, OVS bridges, agents) must not clash with the new one
+            await asyncio.to_thread(_cleanup_mininet)
+            settings.topology_path = path
+            last_seq = (old.events.recent(1) or [None])[-1] if old is not None else None
+            try:
+                rt = Runtime(settings)
+            except Exception as e:  # an invalid file: put the previous topology back
+                log.exception("cannot load %s", path)
+                if old is not None:
+                    settings.topology_path = old.s.topology_path
+                    rt = Runtime(settings)
+                    rt.events.emit("system.error", f"Could not deploy {path.name}: {e}; booting the previous topology again", severity="error")
+                else:
+                    raise
+            if last_seq is not None:
+                # browsers keep only events newer than the last one they saw: keep counting
+                rt.events._seq = itertools.count(last_seq.seq + 1)
+            state["runtime"] = rt
+            await boot(rt)
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        rt = Runtime(settings)
+        state["runtime"] = rt
+        task = asyncio.create_task(broadcaster())
+        await boot(rt)
         try:
             yield
         finally:
             task.cancel()
-            await asyncio.to_thread(rt.stop)
+            cur: Runtime | None = state["runtime"]
+            if cur is not None:
+                await asyncio.to_thread(cur.stop)
 
     app = FastAPI(title="NETVISTA", version="1.0.0", lifespan=lifespan)
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -172,12 +279,50 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         r: Runtime | None = state["runtime"]
         return {"status": r.status if r else "starting", "error": r.error if r else None, "time": time.time()}
 
+    # ------------------------------------------------------------------ topology library + designer
+    @app.get("/api/topologies")
+    def topologies():
+        return list_topologies(settings.topology_path)
+
+    @app.get("/api/topologies/file")
+    def topology_file(file: str):
+        return guard(read_topology, file)
+
+    @app.post("/api/topologies/check")
+    def topology_check(req: TopologyReq):
+        return sanitize(design_report(req.topology))
+
+    @app.post("/api/topologies/save")
+    def topology_save(req: TopologyReq):
+        return {"file": guard(save_topology, req.topology)}
+
+    @app.post("/api/topologies/deploy")
+    async def topology_deploy(req: DeployReq):
+        if req.topology is not None:
+            file = guard(save_topology, req.topology)
+        elif req.file:
+            file = req.file
+        else:
+            raise HTTPException(400, "give a library file or a topology")
+        path = guard(resolve_topology, file)
+        guard(topology_from_dict, json.loads(path.read_text(encoding="utf-8")))
+        r: Runtime | None = state["runtime"]
+        if deploy_lock.locked():
+            raise HTTPException(409, "a deployment is already in progress")
+        if r is not None and r.status == "running":
+            a = r.extensions.get("assure")
+            busy = a.busy_job() if a else None
+            if busy:
+                raise HTTPException(409, f"the {busy} job is using the network; wait for it to finish")
+        asyncio.create_task(redeploy(path))
+        return {"ok": True, "file": file}
+
     @app.get("/api/topology")
     def topology():
         r: Runtime | None = state["runtime"]
         if r is None:
             raise HTTPException(503, "starting")
-        return {"topology": r.topo.to_dict(), "plan": r.plan.to_dict(), "flow_pairs": [f"{c}>{s}" for c, s in r.topo.flow_pairs()], "status": r.status, "error": r.error}
+        return {"topology": r.topo.to_dict(), "plan": r.plan.to_dict(), "flow_pairs": [f"{c}>{s}" for c, s in r.topo.flow_pairs()], "status": r.status, "error": r.error, "boot_id": r.boot_id, "file": r.s.topology_path.name}
 
     @app.get("/api/state")
     async def get_state():
@@ -453,6 +598,151 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/ai/evaluations")
     def ai_evaluations():
         return ext("ai").evaluation.list_runs()
+
+    # ------------------------------------------------------------------ Assure: intents, resilience, planning
+    def guard_assure(fn, *args, **kwargs):
+        from ..assure.intents import IntentError
+
+        try:
+            return fn(*args, **kwargs)
+        except (IntentError, ChaosError, ValueError, KeyError) as e:
+            raise HTTPException(400, detail=str(e).strip("'\"")) from e
+
+    @app.get("/api/assure/intents")
+    def assure_intents():
+        return sanitize(ext("assure").intent_rows())
+
+    @app.post("/api/assure/intents")
+    def assure_intent_add(req: IntentReq):
+        it = guard_assure(ext("assure").intents.add, req.model_dump())
+        rt().events.emit("intent.add", f"Intent {it.id} added: {it.label}", intent=it.id)
+        return it.to_dict()
+
+    @app.put("/api/assure/intents/{iid}")
+    def assure_intent_update(iid: str, req: IntentPatch):
+        it = guard_assure(ext("assure").intents.update, iid, {k: v for k, v in req.model_dump().items() if v is not None})
+        rt().events.emit("intent.update", f"Intent {it.id} changed: {it.label}", intent=it.id)
+        return it.to_dict()
+
+    @app.delete("/api/assure/intents/{iid}")
+    def assure_intent_delete(iid: str):
+        guard_assure(ext("assure").intents.remove, iid)
+        rt().events.emit("intent.remove", f"Intent {iid} removed", intent=iid)
+        return {"ok": True}
+
+    @app.post("/api/assure/intents/preset")
+    def assure_intent_preset(req: PresetReq):
+        a = ext("assure")
+        raws = guard_assure(a.preset, req.name)
+        if req.replace:
+            items = guard_assure(a.intents.replace_all, raws, "preset")
+        else:
+            items = [guard_assure(a.intents.add, r, "preset") for r in raws]
+        rt().events.emit("intent.preset", f"Intent preset '{req.name}' loaded: {len(items)} intents", severity="info")
+        return [i.to_dict() for i in items]
+
+    @app.get("/api/assure/scenarios")
+    def assure_scenarios():
+        return ext("assure").scenarios()
+
+    @app.get("/api/assure/resilience")
+    def assure_resilience(double: bool = False):
+        a = ext("assure")
+        return (a.resilience_n2 if double else a.resilience) or {"t": None}
+
+    @app.post("/api/assure/resilience")
+    async def assure_resilience_run(req: ResilienceReq):
+        return await asyncio.to_thread(guard_assure, ext("assure").run_resilience, req.double)
+
+    @app.post("/api/assure/plan")
+    async def assure_plan():
+        return await asyncio.to_thread(guard_assure, ext("assure").make_plan, "user")
+
+    @app.get("/api/assure/plans")
+    def assure_plans():
+        return list(ext("assure").plans.values())[::-1]
+
+    @app.get("/api/assure/plans/{pid}")
+    def assure_plan_get(pid: str):
+        return guard_assure(ext("assure").get_plan, pid)
+
+    @app.post("/api/assure/plans/{pid}/confirm")
+    async def assure_plan_confirm(pid: str):
+        return await asyncio.to_thread(guard_assure, ext("assure").confirm_plan, pid)
+
+    @app.post("/api/assure/plans/{pid}/apply")
+    async def assure_plan_apply(pid: str):
+        return await asyncio.to_thread(guard_assure, ext("assure").apply_plan, pid, "operator")
+
+    @app.post("/api/assure/plan/clear")
+    def assure_plan_clear(req: ModeReq):
+        return guard_assure(ext("assure").clear_plan, req.mode)
+
+    @app.get("/api/assure/autopilot")
+    def assure_autopilot():
+        return ext("assure").autopilot.view()
+
+    @app.post("/api/assure/autopilot/mode")
+    def assure_autopilot_mode(req: ModeReq):
+        return guard_assure(ext("assure").autopilot.set_mode, req.mode)
+
+    @app.post("/api/assure/autopilot/decisions/{did}/approve")
+    def assure_autopilot_approve(did: str):
+        d = guard_assure(ext("assure").autopilot.approve, did)
+        return sanitize({k: v for k, v in d.items() if not k.startswith("_")})
+
+    @app.post("/api/assure/autopilot/decisions/{did}/dismiss")
+    def assure_autopilot_dismiss(did: str):
+        d = guard_assure(ext("assure").autopilot.dismiss, did)
+        return sanitize({k: v for k, v in d.items() if not k.startswith("_")})
+
+    @app.get("/api/assure/uncertainty")
+    def assure_uncertainty():
+        return ext("assure").pool.summary()
+
+    @app.post("/api/assure/drill")
+    def assure_drill(req: DrillReq):
+        return guard_assure(ext("assure").drills.start, req.scenario)
+
+    @app.post("/api/assure/drill/cancel")
+    def assure_drill_cancel():
+        ext("assure").drills.stop()
+        return {"ok": True}
+
+    @app.get("/api/assure/drills")
+    def assure_drills():
+        return ext("assure").drills.list_runs()
+
+    @app.post("/api/assure/benchmark")
+    def assure_benchmark(req: BenchmarkReq):
+        return guard_assure(ext("assure").benchmark.start, req.strategies, req.scenarios, req.rates)
+
+    @app.post("/api/assure/benchmark/cancel")
+    def assure_benchmark_cancel():
+        ext("assure").benchmark.stop()
+        return {"ok": True}
+
+    @app.get("/api/assure/benchmarks")
+    def assure_benchmarks():
+        return ext("assure").benchmark.list_runs()
+
+    @app.post("/api/assure/demo/start")
+    def assure_demo_start():
+        return guard_assure(ext("assure").demo.start)
+
+    @app.post("/api/assure/demo/stop")
+    def assure_demo_stop():
+        ext("assure").demo.stop()
+        return {"ok": True}
+
+    @app.get("/api/assure/stress_profile")
+    def assure_stress_profile():
+        return ext("assure").stress_profile()
+
+    @app.post("/api/routing/herd_guard")
+    def routing_herd_guard(req: ToggleReq):
+        rt().controller.set_herd_guard(req.on)
+        return {"herd_guard": rt().controller.herd_guard}
 
     # ------------------------------------------------------------------ static UI
     if settings.frontend_dist.is_dir():

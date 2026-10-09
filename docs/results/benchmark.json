@@ -1,0 +1,1003 @@
+{
+ "id": "b1791564826542",
+ "t": 1791564826.5429556,
+ "duration_s": 2029.7,
+ "strategies": [
+  "static",
+  "adaptive-raw",
+  "adaptive",
+  "intent"
+ ],
+ "scenarios": [
+  "link:r1-r2",
+  "link:r1-r3",
+  "link:r2-r4",
+  "link:r3-r4",
+  "link:r2-r5",
+  "link:r3-r5",
+  "link:r4-r5",
+  "node:r2",
+  "node:r3",
+  "node:r4"
+ ],
+ "rates": {
+  "c1>srv1": 12.0,
+  "c1>srv2": 8.0,
+  "c2>srv1": 8.0,
+  "c2>srv2": 12.0
+ },
+ "summary": {
+  "static": {
+   "failures": 10,
+   "violation_s": 6730.0,
+   "new_violation_s": 0,
+   "baseline_violation_s": 2585.0,
+   "mean_time_to_compliance_s": 1.0,
+   "never_compliant": 0,
+   "route_changes": 0,
+   "lost_mbit": 3907.9,
+   "delivered_pct": 51.27,
+   "prediction_accuracy_pct": 40.0
+  },
+  "adaptive-raw": {
+   "failures": 10,
+   "violation_s": 2516.0,
+   "new_violation_s": 711.0,
+   "baseline_violation_s": 943.0,
+   "mean_time_to_compliance_s": 2.0,
+   "never_compliant": 4,
+   "route_changes": 29,
+   "lost_mbit": 156.1,
+   "delivered_pct": 98.05,
+   "prediction_accuracy_pct": 30.0
+  },
+  "adaptive": {
+   "failures": 10,
+   "violation_s": 2597.0,
+   "new_violation_s": 777.0,
+   "baseline_violation_s": 920.0,
+   "mean_time_to_compliance_s": 6.0,
+   "never_compliant": 3,
+   "route_changes": 26,
+   "lost_mbit": 173.9,
+   "delivered_pct": 97.81,
+   "prediction_accuracy_pct": 70.0
+  },
+  "intent": {
+   "failures": 10,
+   "violation_s": 1517.0,
+   "new_violation_s": 1117.0,
+   "baseline_violation_s": 73.0,
+   "mean_time_to_compliance_s": 4.75,
+   "never_compliant": 4,
+   "route_changes": 12,
+   "lost_mbit": 124.9,
+   "delivered_pct": 98.39,
+   "prediction_accuracy_pct": 80.0
+  }
+ },
+ "intents": [
+  {
+   "id": "I1",
+   "label": "c1 \u2192 srv1: round trip p95 \u2264 30 ms, even after any single link or router failure",
+   "priority": "critical",
+   "protect": "any"
+  },
+  {
+   "id": "I2",
+   "label": "c2 \u2192 srv2: round trip p95 \u2264 30 ms, even after any single link or router failure",
+   "priority": "critical",
+   "protect": "any"
+  },
+  {
+   "id": "I3",
+   "label": "every flow: loss \u2264 1%, even after any single link or router failure",
+   "priority": "high",
+   "protect": "any"
+  },
+  {
+   "id": "I4",
+   "label": "every core link at or below 85% load, even after any single link or router failure",
+   "priority": "high",
+   "protect": "any"
+  },
+  {
+   "id": "I5",
+   "label": "every flow must stay connected, even after any single link or router failure",
+   "priority": "critical",
+   "protect": "any"
+  }
+ ],
+ "results": [
+  {
+   "strategy": "static",
+   "scenario": "link:r1-r2",
+   "label": "Link r1-r2 fails",
+   "baseline_violation_s": 242.0,
+   "violation_s": 663.0,
+   "new_violation_s": 0,
+   "time_to_compliance_s": 1.0,
+   "route_changes": 0,
+   "offered_mbit": 800.0,
+   "received_mbit": 29.36,
+   "lost_mbit": 770.64,
+   "measured_broken": [
+    "I1",
+    "I2",
+    "I3",
+    "I5"
+   ],
+   "predicted_broken": [
+    "I1",
+    "I2",
+    "I3",
+    "I5"
+   ],
+   "prediction_match": true,
+   "plan": null
+  },
+  {
+   "strategy": "static",
+   "scenario": "link:r1-r3",
+   "label": "Link r1-r3 fails",
+   "baseline_violation_s": 268.0,
+   "violation_s": 660.0,
+   "new_violation_s": 0,
+   "time_to_compliance_s": 1.0,
+   "route_changes": 0,
+   "offered_mbit": 800.0,
+   "received_mbit": 577.9,
+   "lost_mbit": 222.1,
+   "measured_broken": [
+    "I1",
+    "I2",
+    "I3",
+    "I4",
+    "I5"
+   ],
+   "predicted_broken": [
+    "I1",
+    "I2",
+    "I3",
+    "I4"
+   ],
+   "prediction_match": false,
+   "plan": null
+  },
+  {
+   "strategy": "static",
+   "scenario": "link:r2-r4",
+   "label": "Link r2-r4 fails",
+   "baseline_violation_s": 219.0,
+   "violation_s": 700.0,
+   "new_violation_s": 0,
+   "time_to_compliance_s": 1.0,
+   "route_changes": 0,
+   "offered_mbit": 800.0,
+   "received_mbit": 578.87,
+   "lost_mbit": 221.13,
+   "measured_broken": [
+    "I1",
+    "I2",
+    "I3",
+    "I4",
+    "I5"
+   ],
+   "predicted_broken": [
+    "I1",
+    "I2",
+    "I3",
+    "I4"
+   ],
+   "prediction_match": false,
+   "plan": null
+  },
+  {
+   "strategy": "static",
+   "scenario": "link:r3-r4",
+   "label": "Link r3-r4 fails",
+   "baseline_violation_s": 288.0,
+   "violation_s": 670.0,
+   "new_violation_s": 0,
+   "time_to_compliance_s": 1.0,
+   "route_changes": 0,
+   "offered_mbit": 800.0,
+   "received_mbit": 579.11,
+   "lost_mbit": 220.89,
+   "measured_broken": [
+    "I1",
+    "I2",
+    "I3",
+    "I4",
+    "I5"
+   ],
+   "predicted_broken": [
+    "I1",
+    "I2",
+    "I3",
+    "I4"
+   ],
+   "prediction_match": false,
+   "plan": null
+  },
+  {
+   "strategy": "static",
+   "scenario": "link:r2-r5",
+   "label": "Link r2-r5 fails",
+   "baseline_violation_s": 258.0,
+   "violation_s": 660.0,
+   "new_violation_s": 0,
+   "time_to_compliance_s": 1.0,
+   "route_changes": 0,
+   "offered_mbit": 812.0,
+   "received_mbit": 15.84,
+   "lost_mbit": 796.16,
+   "measured_broken": [
+    "I1",
+    "I2",
+    "I3",
+    "I5"
+   ],
+   "predicted_broken": [
+    "I1",
+    "I2",
+    "I3",
+    "I5"
+   ],
+   "prediction_match": true,
+   "plan": null
+  },
+  {
+   "strategy": "static",
+   "scenario": "link:r3-r5",
+   "label": "Link r3-r5 fails",
+   "baseline_violation_s": 258.0,
+   "violation_s": 707.0,
+   "new_violation_s": 0,
+   "time_to_compliance_s": 1.0,
+   "route_changes": 0,
+   "offered_mbit": 800.0,
+   "received_mbit": 579.49,
+   "lost_mbit": 220.51,
+   "measured_broken": [
+    "I1",
+    "I2",
+    "I3",
+    "I4",
+    "I5"
+   ],
+   "predicted_broken": [
+    "I1",
+    "I2",
+    "I3",
+    "I4"
+   ],
+   "prediction_match": false,
+   "plan": null
+  },
+  {
+   "strategy": "static",
+   "scenario": "link:r4-r5",
+   "label": "Link r4-r5 fails",
+   "baseline_violation_s": 258.0,
+   "violation_s": 700.0,
+   "new_violation_s": 0,
+   "time_to_compliance_s": 1.0,
+   "route_changes": 0,
+   "offered_mbit": 800.0,
+   "received_mbit": 578.74,
+   "lost_mbit": 221.26,
+   "measured_broken": [
+    "I1",
+    "I2",
+    "I3",
+    "I4",
+    "I5"
+   ],
+   "predicted_broken": [
+    "I1",
+    "I2",
+    "I3",
+    "I4"
+   ],
+   "prediction_match": false,
+   "plan": null
+  },
+  {
+   "strategy": "static",
+   "scenario": "node:r2",
+   "label": "Router r2 fails",
+   "baseline_violation_s": 278.0,
+   "violation_s": 660.0,
+   "new_violation_s": 0,
+   "time_to_compliance_s": 1.0,
+   "route_changes": 0,
+   "offered_mbit": 808.0,
+   "received_mbit": 16.98,
+   "lost_mbit": 791.02,
+   "measured_broken": [
+    "I1",
+    "I2",
+    "I3",
+    "I5"
+   ],
+   "predicted_broken": [
+    "I1",
+    "I2",
+    "I3",
+    "I5"
+   ],
+   "prediction_match": true,
+   "plan": null
+  },
+  {
+   "strategy": "static",
+   "scenario": "node:r3",
+   "label": "Router r3 fails",
+   "baseline_violation_s": 258.0,
+   "violation_s": 650.0,
+   "new_violation_s": 0,
+   "time_to_compliance_s": 1.0,
+   "route_changes": 0,
+   "offered_mbit": 800.0,
+   "received_mbit": 578.36,
+   "lost_mbit": 221.64,
+   "measured_broken": [
+    "I1",
+    "I2",
+    "I3",
+    "I4",
+    "I5"
+   ],
+   "predicted_broken": [
+    "I1",
+    "I2",
+    "I3",
+    "I4"
+   ],
+   "prediction_match": false,
+   "plan": null
+  },
+  {
+   "strategy": "static",
+   "scenario": "node:r4",
+   "label": "Router r4 fails",
+   "baseline_violation_s": 258.0,
+   "violation_s": 660.0,
+   "new_violation_s": 0,
+   "time_to_compliance_s": 1.0,
+   "route_changes": 0,
+   "offered_mbit": 800.0,
+   "received_mbit": 577.43,
+   "lost_mbit": 222.57,
+   "measured_broken": [
+    "I1",
+    "I2",
+    "I3",
+    "I4"
+   ],
+   "predicted_broken": [
+    "I1",
+    "I2",
+    "I3",
+    "I4"
+   ],
+   "prediction_match": true,
+   "plan": null
+  },
+  {
+   "strategy": "adaptive-raw",
+   "scenario": "link:r1-r2",
+   "label": "Link r1-r2 fails",
+   "baseline_violation_s": 213.0,
+   "violation_s": 425.0,
+   "new_violation_s": 0,
+   "time_to_compliance_s": 1.0,
+   "route_changes": 4,
+   "offered_mbit": 788.0,
+   "received_mbit": 782.22,
+   "lost_mbit": 5.78,
+   "measured_broken": [
+    "I1",
+    "I2"
+   ],
+   "predicted_broken": [
+    "I1",
+    "I2"
+   ],
+   "prediction_match": true,
+   "plan": null
+  },
+  {
+   "strategy": "adaptive-raw",
+   "scenario": "link:r1-r3",
+   "label": "Link r1-r3 fails",
+   "baseline_violation_s": 110.0,
+   "violation_s": 3.0,
+   "new_violation_s": 3.0,
+   "time_to_compliance_s": 2.0,
+   "route_changes": 2,
+   "offered_mbit": 808.0,
+   "received_mbit": 808.07,
+   "lost_mbit": 0.0,
+   "measured_broken": [],
+   "predicted_broken": [
+    "I2",
+    "I4"
+   ],
+   "prediction_match": false,
+   "plan": null
+  },
+  {
+   "strategy": "adaptive-raw",
+   "scenario": "link:r2-r4",
+   "label": "Link r2-r4 fails",
+   "baseline_violation_s": 120.0,
+   "violation_s": 200.0,
+   "new_violation_s": 0,
+   "time_to_compliance_s": 1.0,
+   "route_changes": 1,
+   "offered_mbit": 800.0,
+   "received_mbit": 800.04,
+   "lost_mbit": 0.0,
+   "measured_broken": [
+    "I2"
+   ],
+   "predicted_broken": [],
+   "prediction_match": false,
+   "plan": null
+  },
+  {
+   "strategy": "adaptive-raw",
+   "scenario": "link:r3-r4",
+   "label": "Link r3-r4 fails",
+   "baseline_violation_s": 80.0,
+   "violation_s": 200.0,
+   "new_violation_s": 0,
+   "time_to_compliance_s": 1.0,
+   "route_changes": 0,
+   "offered_mbit": 800.0,
+   "received_mbit": 800.14,
+   "lost_mbit": 0.0,
+   "measured_broken": [
+    "I1"
+   ],
+   "predicted_broken": [
+    "I1",
+    "I2"
+   ],
+   "prediction_match": false,
+   "plan": null
+  },
+  {
+   "strategy": "adaptive-raw",
+   "scenario": "link:r2-r5",
+   "label": "Link r2-r5 fails",
+   "baseline_violation_s": 80.0,
+   "violation_s": 200.0,
+   "new_violation_s": 0,
+   "time_to_compliance_s": 1.0,
+   "route_changes": 0,
+   "offered_mbit": 812.0,
+   "received_mbit": 811.89,
+   "lost_mbit": 0.11,
+   "measured_broken": [
+    "I1"
+   ],
+   "predicted_broken": [
+    "I1",
+    "I2"
+   ],
+   "prediction_match": false,
+   "plan": null
+  },
+  {
+   "strategy": "adaptive-raw",
+   "scenario": "link:r3-r5",
+   "label": "Link r3-r5 fails",
+   "baseline_violation_s": 80.0,
+   "violation_s": 403.0,
+   "new_violation_s": 223.0,
+   "time_to_compliance_s": null,
+   "route_changes": 9,
+   "offered_mbit": 776.0,
+   "received_mbit": 737.6,
+   "lost_mbit": 38.4,
+   "measured_broken": [
+    "I1",
+    "I2"
+   ],
+   "predicted_broken": [
+    "I2"
+   ],
+   "prediction_match": false,
+   "plan": null
+  },
+  {
+   "strategy": "adaptive-raw",
+   "scenario": "link:r4-r5",
+   "label": "Link r4-r5 fails",
+   "baseline_violation_s": 80.0,
+   "violation_s": 221.0,
+   "new_violation_s": 21.0,
+   "time_to_compliance_s": 6.0,
+   "route_changes": 7,
+   "offered_mbit": 800.0,
+   "received_mbit": 762.9,
+   "lost_mbit": 37.1,
+   "measured_broken": [
+    "I2"
+   ],
+   "predicted_broken": [
+    "I1",
+    "I2",
+    "I3",
+    "I4"
+   ],
+   "prediction_match": false,
+   "plan": null
+  },
+  {
+   "strategy": "adaptive-raw",
+   "scenario": "node:r2",
+   "label": "Router r2 fails",
+   "baseline_violation_s": 80.0,
+   "violation_s": 412.0,
+   "new_violation_s": 212.0,
+   "time_to_compliance_s": null,
+   "route_changes": 3,
+   "offered_mbit": 800.0,
+   "received_mbit": 761.16,
+   "lost_mbit": 38.84,
+   "measured_broken": [
+    "I1",
+    "I2"
+   ],
+   "predicted_broken": [
+    "I1",
+    "I2"
+   ],
+   "prediction_match": true,
+   "plan": null
+  },
+  {
+   "strategy": "adaptive-raw",
+   "scenario": "node:r3",
+   "label": "Router r3 fails",
+   "baseline_violation_s": 20.0,
+   "violation_s": 63.0,
+   "new_violation_s": 63.0,
+   "time_to_compliance_s": null,
+   "route_changes": 2,
+   "offered_mbit": 800.0,
+   "received_mbit": 779.98,
+   "lost_mbit": 20.02,
+   "measured_broken": [
+    "I4"
+   ],
+   "predicted_broken": [
+    "I2",
+    "I4"
+   ],
+   "prediction_match": false,
+   "plan": null
+  },
+  {
+   "strategy": "adaptive-raw",
+   "scenario": "node:r4",
+   "label": "Router r4 fails",
+   "baseline_violation_s": 80.0,
+   "violation_s": 389.0,
+   "new_violation_s": 189.0,
+   "time_to_compliance_s": null,
+   "route_changes": 1,
+   "offered_mbit": 800.0,
+   "received_mbit": 784.18,
+   "lost_mbit": 15.82,
+   "measured_broken": [
+    "I1",
+    "I2"
+   ],
+   "predicted_broken": [
+    "I1",
+    "I2"
+   ],
+   "prediction_match": true,
+   "plan": null
+  },
+  {
+   "strategy": "adaptive",
+   "scenario": "link:r1-r2",
+   "label": "Link r1-r2 fails",
+   "baseline_violation_s": 160.0,
+   "violation_s": 409.0,
+   "new_violation_s": 9.0,
+   "time_to_compliance_s": 5.0,
+   "route_changes": 2,
+   "offered_mbit": 800.0,
+   "received_mbit": 778.8,
+   "lost_mbit": 21.2,
+   "measured_broken": [
+    "I1",
+    "I2"
+   ],
+   "predicted_broken": [
+    "I1",
+    "I2"
+   ],
+   "prediction_match": true,
+   "plan": null
+  },
+  {
+   "strategy": "adaptive",
+   "scenario": "link:r1-r3",
+   "label": "Link r1-r3 fails",
+   "baseline_violation_s": 80.0,
+   "violation_s": 216.0,
+   "new_violation_s": 116.0,
+   "time_to_compliance_s": 12.0,
+   "route_changes": 3,
+   "offered_mbit": 800.0,
+   "received_mbit": 799.98,
+   "lost_mbit": 0.02,
+   "measured_broken": [],
+   "predicted_broken": [],
+   "prediction_match": true,
+   "plan": null
+  },
+  {
+   "strategy": "adaptive",
+   "scenario": "link:r2-r4",
+   "label": "Link r2-r4 fails",
+   "baseline_violation_s": 80.0,
+   "violation_s": 353.0,
+   "new_violation_s": 183.0,
+   "time_to_compliance_s": null,
+   "route_changes": 4,
+   "offered_mbit": 812.0,
+   "received_mbit": 811.76,
+   "lost_mbit": 0.24,
+   "measured_broken": [
+    "I1",
+    "I2"
+   ],
+   "predicted_broken": [
+    "I1",
+    "I2"
+   ],
+   "prediction_match": true,
+   "plan": null
+  },
+  {
+   "strategy": "adaptive",
+   "scenario": "link:r3-r4",
+   "label": "Link r3-r4 fails",
+   "baseline_violation_s": 80.0,
+   "violation_s": 209.0,
+   "new_violation_s": 9.0,
+   "time_to_compliance_s": 6.0,
+   "route_changes": 2,
+   "offered_mbit": 800.0,
+   "received_mbit": 772.78,
+   "lost_mbit": 27.22,
+   "measured_broken": [
+    "I2"
+   ],
+   "predicted_broken": [
+    "I2"
+   ],
+   "prediction_match": true,
+   "plan": null
+  },
+  {
+   "strategy": "adaptive",
+   "scenario": "link:r2-r5",
+   "label": "Link r2-r5 fails",
+   "baseline_violation_s": 140.0,
+   "violation_s": 252.0,
+   "new_violation_s": 22.0,
+   "time_to_compliance_s": 6.0,
+   "route_changes": 2,
+   "offered_mbit": 760.0,
+   "received_mbit": 735.16,
+   "lost_mbit": 24.84,
+   "measured_broken": [
+    "I2"
+   ],
+   "predicted_broken": [
+    "I1",
+    "I2"
+   ],
+   "prediction_match": false,
+   "plan": null
+  },
+  {
+   "strategy": "adaptive",
+   "scenario": "link:r3-r5",
+   "label": "Link r3-r5 fails",
+   "baseline_violation_s": 150.0,
+   "violation_s": 230.0,
+   "new_violation_s": 0,
+   "time_to_compliance_s": 1.0,
+   "route_changes": 5,
+   "offered_mbit": 788.0,
+   "received_mbit": 787.77,
+   "lost_mbit": 0.23,
+   "measured_broken": [],
+   "predicted_broken": [
+    "I1"
+   ],
+   "prediction_match": false,
+   "plan": null
+  },
+  {
+   "strategy": "adaptive",
+   "scenario": "link:r4-r5",
+   "label": "Link r4-r5 fails",
+   "baseline_violation_s": 0,
+   "violation_s": 192.0,
+   "new_violation_s": 192.0,
+   "time_to_compliance_s": null,
+   "route_changes": 2,
+   "offered_mbit": 800.0,
+   "received_mbit": 773.27,
+   "lost_mbit": 26.73,
+   "measured_broken": [
+    "I1"
+   ],
+   "predicted_broken": [],
+   "prediction_match": false,
+   "plan": null
+  },
+  {
+   "strategy": "adaptive",
+   "scenario": "node:r2",
+   "label": "Router r2 fails",
+   "baseline_violation_s": 70.0,
+   "violation_s": 412.0,
+   "new_violation_s": 212.0,
+   "time_to_compliance_s": null,
+   "route_changes": 2,
+   "offered_mbit": 800.0,
+   "received_mbit": 774.25,
+   "lost_mbit": 25.75,
+   "measured_broken": [
+    "I1",
+    "I2"
+   ],
+   "predicted_broken": [
+    "I1",
+    "I2"
+   ],
+   "prediction_match": true,
+   "plan": null
+  },
+  {
+   "strategy": "adaptive",
+   "scenario": "node:r3",
+   "label": "Router r3 fails",
+   "baseline_violation_s": 80.0,
+   "violation_s": 122.0,
+   "new_violation_s": 22.0,
+   "time_to_compliance_s": 6.0,
+   "route_changes": 2,
+   "offered_mbit": 812.0,
+   "received_mbit": 785.22,
+   "lost_mbit": 26.78,
+   "measured_broken": [],
+   "predicted_broken": [],
+   "prediction_match": true,
+   "plan": null
+  },
+  {
+   "strategy": "adaptive",
+   "scenario": "node:r4",
+   "label": "Router r4 fails",
+   "baseline_violation_s": 80.0,
+   "violation_s": 202.0,
+   "new_violation_s": 12.0,
+   "time_to_compliance_s": 6.0,
+   "route_changes": 2,
+   "offered_mbit": 760.0,
+   "received_mbit": 739.07,
+   "lost_mbit": 20.93,
+   "measured_broken": [
+    "I1"
+   ],
+   "predicted_broken": [
+    "I1"
+   ],
+   "prediction_match": true,
+   "plan": null
+  },
+  {
+   "strategy": "intent",
+   "scenario": "link:r1-r2",
+   "label": "Link r1-r2 fails",
+   "baseline_violation_s": 0,
+   "violation_s": 389.0,
+   "new_violation_s": 389.0,
+   "time_to_compliance_s": null,
+   "route_changes": 2,
+   "offered_mbit": 812.0,
+   "received_mbit": 780.67,
+   "lost_mbit": 31.33,
+   "measured_broken": [
+    "I1",
+    "I2"
+   ],
+   "predicted_broken": [
+    "I1",
+    "I2"
+   ],
+   "prediction_match": true,
+   "plan": "P3"
+  },
+  {
+   "strategy": "intent",
+   "scenario": "link:r1-r3",
+   "label": "Link r1-r3 fails",
+   "baseline_violation_s": 0,
+   "violation_s": 241.0,
+   "new_violation_s": 241.0,
+   "time_to_compliance_s": 14.2,
+   "route_changes": 2,
+   "offered_mbit": 760.0,
+   "received_mbit": 755.17,
+   "lost_mbit": 4.83,
+   "measured_broken": [],
+   "predicted_broken": [],
+   "prediction_match": true,
+   "plan": "P3"
+  },
+  {
+   "strategy": "intent",
+   "scenario": "link:r2-r4",
+   "label": "Link r2-r4 fails",
+   "baseline_violation_s": 0,
+   "violation_s": 0,
+   "new_violation_s": 0,
+   "time_to_compliance_s": 1.0,
+   "route_changes": 0,
+   "offered_mbit": 760.0,
+   "received_mbit": 760.14,
+   "lost_mbit": 0.0,
+   "measured_broken": [],
+   "predicted_broken": [],
+   "prediction_match": true,
+   "plan": "P3"
+  },
+  {
+   "strategy": "intent",
+   "scenario": "link:r3-r4",
+   "label": "Link r3-r4 fails",
+   "baseline_violation_s": 0,
+   "violation_s": 20.0,
+   "new_violation_s": 20.0,
+   "time_to_compliance_s": null,
+   "route_changes": 0,
+   "offered_mbit": 800.0,
+   "received_mbit": 799.91,
+   "lost_mbit": 0.09,
+   "measured_broken": [],
+   "predicted_broken": [],
+   "prediction_match": true,
+   "plan": "P3"
+  },
+  {
+   "strategy": "intent",
+   "scenario": "link:r2-r5",
+   "label": "Link r2-r5 fails",
+   "baseline_violation_s": 30.0,
+   "violation_s": 409.0,
+   "new_violation_s": 9.0,
+   "time_to_compliance_s": 5.3,
+   "route_changes": 2,
+   "offered_mbit": 716.0,
+   "received_mbit": 679.22,
+   "lost_mbit": 36.78,
+   "measured_broken": [
+    "I1",
+    "I2"
+   ],
+   "predicted_broken": [
+    "I2"
+   ],
+   "prediction_match": false,
+   "plan": "P3"
+  },
+  {
+   "strategy": "intent",
+   "scenario": "link:r3-r5",
+   "label": "Link r3-r5 fails",
+   "baseline_violation_s": 40.0,
+   "violation_s": 0,
+   "new_violation_s": 0,
+   "time_to_compliance_s": 1.0,
+   "route_changes": 2,
+   "offered_mbit": 812.0,
+   "received_mbit": 812.01,
+   "lost_mbit": 0.0,
+   "measured_broken": [],
+   "predicted_broken": [],
+   "prediction_match": true,
+   "plan": "P3"
+  },
+  {
+   "strategy": "intent",
+   "scenario": "link:r4-r5",
+   "label": "Link r4-r5 fails",
+   "baseline_violation_s": 3.0,
+   "violation_s": 70.0,
+   "new_violation_s": 70.0,
+   "time_to_compliance_s": null,
+   "route_changes": 0,
+   "offered_mbit": 760.0,
+   "received_mbit": 760.1,
+   "lost_mbit": 0.0,
+   "measured_broken": [
+    "I1"
+   ],
+   "predicted_broken": [],
+   "prediction_match": false,
+   "plan": "P3"
+  },
+  {
+   "strategy": "intent",
+   "scenario": "node:r2",
+   "label": "Router r2 fails",
+   "baseline_violation_s": 0,
+   "violation_s": 376.0,
+   "new_violation_s": 376.0,
+   "time_to_compliance_s": null,
+   "route_changes": 2,
+   "offered_mbit": 760.0,
+   "received_mbit": 729.93,
+   "lost_mbit": 30.07,
+   "measured_broken": [
+    "I1",
+    "I2"
+   ],
+   "predicted_broken": [
+    "I1",
+    "I2"
+   ],
+   "prediction_match": true,
+   "plan": "P3"
+  },
+  {
+   "strategy": "intent",
+   "scenario": "node:r3",
+   "label": "Router r3 fails",
+   "baseline_violation_s": 0,
+   "violation_s": 12.0,
+   "new_violation_s": 12.0,
+   "time_to_compliance_s": 6.0,
+   "route_changes": 2,
+   "offered_mbit": 800.0,
+   "received_mbit": 778.24,
+   "lost_mbit": 21.76,
+   "measured_broken": [],
+   "predicted_broken": [],
+   "prediction_match": true,
+   "plan": "P3"
+  },
+  {
+   "strategy": "intent",
+   "scenario": "node:r4",
+   "label": "Router r4 fails",
+   "baseline_violation_s": 0,
+   "violation_s": 0,
+   "new_violation_s": 0,
+   "time_to_compliance_s": 1.0,
+   "route_changes": 0,
+   "offered_mbit": 760.0,
+   "received_mbit": 760.14,
+   "lost_mbit": 0.0,
+   "measured_broken": [],
+   "predicted_broken": [],
+   "prediction_match": true,
+   "plan": "P3"
+  }
+ ]
+}

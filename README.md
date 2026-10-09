@@ -12,6 +12,20 @@ link or router that explains every bad and every healthy probe. A copilot (Claud
 model through Ollama) answers questions from live data through tools, asks the twin "what if",
 and proposes changes that only you can apply.
 
+**Assure** closes the loop. You state *intents*: "c1 → srv1 round trip p95 ≤ 30 ms, even
+after any single link or router failure", "keep every core link under 85 %", "c2 → srv2 must
+avoid r3". They are checked every second on the live network. A fast fluid twin predicts, for
+every possible single failure, which intents would break and whether any routing could have
+avoided it (an exhaustive search is the proof). A planner computes every flow's path *and* a
+pre-checked backup for every failure, the packet twin cross-checks it, an autopilot applies it
+only through a safety gate, and every deployment and drill is measured to show whether the
+prediction was right. A live benchmark compares it with static and adaptive routing on the
+same failures.
+
+The **Designer** lets you draw a network in the browser and boot it as real Linux routers:
+the answer to "Packet Tracer already does that". Packet Tracer simulates a network; NETVISTA
+deploys one, measures it, predicts it and proves the predictions.
+
 Every number in the live views comes from the emulation (interface counters, probe agents,
 iperf3 receivers). Simulated values are always labelled **Simulation**, and AI-written text is
 labelled **AI answer**, with every measured value checked against the data the model read.
@@ -20,8 +34,10 @@ Nothing is mocked.
 See **[DESIGN.md](DESIGN.md)** for the architecture, every design decision, the validation
 results and the limitations.
 
+![The live map: five Linux routers, two Open vSwitch sites, two iperf3 flows; the intents and the AI layer on the right](docs/img/live.png)
+
 **Contents:** [Features](#features) · [Architecture](#architecture) · [How it works](#how-it-works)
-· [Results](#results) · [1. Requirements](#1-requirements) · [2. Run it](#2-run-it-one-command)
+· [Results](#results) · [Screenshots](#screenshots) · [1. Requirements](#1-requirements) · [2. Run it](#2-run-it-one-command)
 · [3. Demo](#3-how-to-demo-each-phase) · [4. Tests](#4-tests) · [5. Layout](#5-project-layout)
 · [6. Limitations](#6-known-limitations) · [7. Troubleshooting](#7-troubleshooting)
 
@@ -36,6 +52,11 @@ results and the limitations.
 | **Adaptive routing** | Own Dijkstra + Yen K-shortest paths, a latency/loss/load score, make-before-break policy routes, failure detection in ~1.3 s, reroute in ~15-55 ms |
 | **Digital twin** | A SimPy model of the same topology, calibrated from live probes. Predict a change before applying it, then validate the prediction against the real network |
 | **AI layer** | Learned-baseline anomaly detection, probe-path root-cause analysis, and a grounded LLM copilot that can only *propose* changes |
+| **Assure (intents)** | 8 intent kinds (latency, loss, reach, bandwidth headroom, link load, avoid, waypoint, path diversity), each optionally required to survive any single failure; checked live every second with compliance history |
+| **Failure analysis** | Every single link and router failure, predicted in ~0.2 s with a fluid twin that matches the packet twin within 0.5 % (1000× faster); each break classified as avoidable, unavoidable (exhaustive proof) or a single point of failure; fragility map |
+| **Planner + autopilot** | Joint routing of all flows plus pre-checked backups per failure, an intent routing mode with wait-to-restore, a herd guard for the adaptive controller, shadow / approve / auto modes, a safety gate, verification on live measurements and automatic rollback |
+| **Evidence** | Live drills (fail an element, check the prediction), a live benchmark of four routing strategies, a predicted-vs-measured ledger and prediction intervals with measured coverage |
+| **Designer** | Draw a topology, get design checks (disjoint paths, SPOFs, capacity), save it, and redeploy the emulation with it in place; Abilene and a metro ring are built in |
 | **Packet journey, metrics, scenarios** | Per-hop kernel routing decisions, traceroute, 15 min metrics, record/replay and a one-button demo |
 
 ## Architecture
@@ -58,12 +79,15 @@ flowchart LR
         SIM["simulator (separate process)<br/>SimPy twin + calibration"]
         VAL["validation<br/>predict, apply, measure, compare"]
         AI["ai<br/>anomaly detector, root cause,<br/>evaluation, copilot"]
+        AS["assure<br/>intents, failure analysis,<br/>planner, autopilot, drills, benchmark"]
     end
 
     LLM[("Claude API<br/>or local Ollama")]
 
     UI <-->|"REST, WebSocket, SSE"| RT
-    RT --- EMU & TEL & CHAOS & ROUTE & SIM & VAL & AI
+    RT --- EMU & TEL & CHAOS & ROUTE & SIM & VAL & AI & AS
+    AS -.->|"fluid + packet twin"| SIM
+    AS -->|"plans (primary + backups)"| ROUTE
     CHAOS -->|"tc, ip link"| EMU
     TEL -->|"probes, counters"| EMU
     ROUTE -->|"ip route / ip rule"| EMU
@@ -171,6 +195,30 @@ The model has read tools (live state, AI insights, events), one simulate tool (t
 propose tools. It has no tool that changes the network. After each answer, every measured
 value is looked up in the data the model read; values it cannot trace are underlined.
 
+### Assure: intents to proof
+
+```mermaid
+flowchart LR
+    I["Intents<br/>SLOs, policy,<br/>survive single failures"] --> L["Live check<br/>every second"]
+    I --> F["Failure analysis<br/>every single failure,<br/>fluid twin + controller reaction"]
+    F --> B["Bound: exhaustive search<br/>avoidable / unavoidable / SPOF"]
+    I --> P["Planner<br/>all flows jointly +<br/>backups per failure"]
+    P --> X["Packet twin<br/>cross-check"]
+    X --> G{"Safety gate"}
+    G -->|"shadow: log"| S["Would apply"]
+    G -->|"approve / auto"| A["Apply<br/>(intent routing mode)"]
+    A --> V["Verify live<br/>12 s settle, 10 s measure"]
+    V -->|"worse"| R["Roll back"]
+    V -->|"as predicted"| K["Keep"]
+    V --> U["Residual pool<br/>prediction intervals"]
+    D["Drills + live benchmark"] --> U
+```
+
+The controller follows the plan in **intent mode**: flows are pinned to their primary paths,
+and when links die the controller names the failure (one link, or several links sharing one
+router) and installs that failure's pre-planned backups at once. Restored links are trusted
+again only after a 5 s wait-to-restore.
+
 ### Validation loop
 
 ```mermaid
@@ -188,15 +236,35 @@ All measured on the live emulation (Windows 11, WSL2 Ubuntu 24.04). Details in D
 
 | Measurement | Result |
 |---|---|
-| Failure detection / reroute / recovery | ~1.3 s / 15-55 ms / ~1.45 s |
-| Twin error, RTT p50 | 0.21 % (p95: 1.52 %) |
-| Twin error, bottleneck throughput | 0.09 % total, 1.06 % per flow |
-| Twin loss error / paths predicted | 0.79 pp / 100 % |
+| Failure detection / reroute / recovery | 1.26-1.32 s / 12-41 ms / 1.34-1.43 s |
+| Packet twin vs live, 11 scenarios: RTT p50 / p95 | 0.23 % / 0.67 % mean error |
+| Fluid twin vs live, same scenarios: RTT p50 / p95 | 0.59 % / 1.08 %, at 0.2-2.2 ms per prediction |
+| Bottleneck throughput (packet / fluid) | 0.16 % / 0.05 % total error; per-flow loss 1.37 / 1.34 pp; paths 100 % |
+| Prediction intervals (90 % nominal), RTT | fluid ±3.8 %, measured coverage 90.1 %; packet ±3.2 %, 91.4 % |
+| Live benchmark, 10 failures × 4 strategies (weighted intent-seconds violated) | static 6730, adaptive 2516-2597, **intent plan 1517**; in normal operation 920-943 vs **73** |
+| Benchmark: route changes / data delivered / predictions right | adaptive 26-29 / 97.8-98.1 % / 3-7 of 10; plan **12 / 98.4 % / 8 of 10** |
+| Failure analysis + plan, default / Abilene (deployed live from the Designer) | 0.2 s + 0.6 s / 1.8 s + 3.9 s; Abilene plan verified live, drill 100 % as predicted |
+| False link failures in a 5 min soak (stress traffic, heavy polling) | 0 (57 before the WSL2 host-stall guard) |
 | AI detector, 8 injected faults (2 runs) | 8 of 8 caught (threshold rules: 7 of 8, missed +2 ms) |
-| AI root cause named correctly | 8 of 8 |
-| AI false alarms in a quiet minute | 0 |
-| AI mean time to detect | ~3.0 s (threshold rules ~1.7 s: slower on hard faults, better on subtle ones) |
-| Tests | 133 unit + 2 Mininet smoke tests; `live_check.py` all checks passed |
+| AI root cause named correctly / false alarms in a quiet minute | 8 of 8 / 0 |
+| Tests | see [4. Tests](#4-tests) |
+
+The benchmark's honest details (where the plan lost, and why the first run is not the headline)
+are in DESIGN.md §11.9; every complete run is kept in [docs/results/RESULTS.md](docs/results/RESULTS.md).
+
+## Screenshots
+
+All taken from the running system (dashed borders and the "predicted" tag mark predictions;
+everything else is measured).
+
+| | |
+|---|---|
+| ![Fragility map](docs/img/risk.png) | ![Assure](docs/img/assure.png) |
+| **Risk view.** Each element is coloured by how many intents break if it fails; dashed halos mark single points of failure | **Assure.** Intents checked live every second, the fragility map, and the per-failure matrix with the exhaustive best-routing bound |
+| ![Evidence](docs/img/evidence.png) | ![Designer](docs/img/designer.png) |
+| **Evidence.** The live benchmark of four routing strategies over every core failure | **Designer.** Abilene opened from the library with its design checks. "Deploy" boots it as real Linux routers |
+| ![Validation](docs/img/validation.png) | |
+| **Validation.** Both twins against the live network, 22 runs | |
 
 ---
 
@@ -330,10 +398,44 @@ Start the system, then on the **Live network** page:
    real faults and compares the learned detector with the threshold rules, plus the diagnosis
    accuracy.
 
+### Phase 7: Assure (intents, failure analysis, planning, proof)
+1. Open **Assure**. Choose **Load preset… → Gold / bronze SLOs**: two gold latency SLOs derived
+   from the design (30 ms here), loss ≤ 1 %, core links ≤ 85 %, reachability; all must survive any
+   single failure. Each intent shows its live status, a 5-minute status strip and its share met.
+2. Press **Start stress traffic** (every flow loaded, 40 Mbit/s in total). Within seconds the
+   adaptive controller balances load and usually parks a gold flow on a 34-37 ms path: the gold
+   intent turns **Violated**.
+3. The **fragility map** colours every link and router by how much breaks if it fails (dashed:
+   a prediction). The **If one element fails…** matrix shows, per failure and intent, held / at
+   risk / avoidable / unavoidable / cut off, the predicted peak load and lost traffic, and the
+   resilience score next to the best any routing could reach. Click a row for paths and RTT after
+   that failure.
+4. **Plan & autopilot → Make a plan** (~1 s): current vs planned paths, predicted RTT with its
+   interval, resilience before → after (here 59 % → 75.5 %, equal to the bound), the objective,
+   and the backups per failure. **Cross-check (packet twin)** compares it with the SimPy model.
+   **Apply plan**: routing switches to *intent* mode, and after 12 s + 10 s the plan is verified on
+   live measurements (or rolled back automatically).
+5. Back on the matrix, press **Drill live** on a failure (e.g. Link r2-r5): the failure is
+   injected, every intent watched each second, and the prediction scored (Evidence tab).
+6. **Autopilot**: *Shadow* logs what it would do on every change; *Approve* waits for you;
+   *Auto* applies plans that pass the safety gate. Try Auto, then crash r3 in the chaos lab.
+7. **Evidence → Run benchmark** (~35 min): static vs adaptive (with and without the herd guard) vs
+   the intent plan on every core link and transit router, scored in weighted intent-seconds
+   violated, with the failure analysis' prediction checked against every outcome.
+
+### Phase 8: Designer
+1. Open **Designer**: the running topology is in the editor. Open **abilene** from the library.
+2. **+ Router**, then **Connect** and click two devices to cable them; select a cable to edit its
+   capacity, delay, jitter, loss and buffer. **Design checks** update on every edit: disjoint paths
+   per flow, single points of failure, traffic that cannot fit. An unconnected router makes it
+   "cannot boot".
+3. **Save**, then **Deploy…**: the running network is torn down and the design boots as real
+   Linux routers in 10-30 s; every page (Assure included) now works on it.
+
 ## 4. Tests
 
 ```bash
-# unit tests (routing, scoring, simulator, parsers, validation maths, AI detector / diagnosis / copilot)
+# unit tests (routing, scoring, both twins, parsers, validation maths, AI, Assure, topology library)
 wsl -d Ubuntu-24.04 -u root -- bash -c "cd /mnt/c/Users/hardi/OneDrive/Desktop/NETVISTA/backend && /opt/netvista/venv/bin/python -m pytest -m 'not emulation'"
 # smoke tests that boot real Mininet topologies (stop the app first: same interface names)
 wsl -d Ubuntu-24.04 -u root -- bash -c "cd /mnt/c/Users/hardi/OneDrive/Desktop/NETVISTA/backend && /opt/netvista/venv/bin/python -m pytest -m emulation"
@@ -343,36 +445,44 @@ wsl -d Ubuntu-24.04 -u root -- /opt/netvista/venv/bin/python /mnt/c/Users/hardi/
 wsl -d Ubuntu-24.04 -u root -- /opt/netvista/venv/bin/python /mnt/c/Users/hardi/OneDrive/Desktop/NETVISTA/scripts/twin_check.py --suite
 ```
 
-Results at the time of writing: 132 unit tests and 2 emulation smoke tests pass,
-`live_check.py` reports ALL CHECKS PASSED, and the suite figures are in DESIGN.md §9.
+Results at the time of writing: 179 unit tests and 2 emulation smoke tests pass,
+`live_check.py` (which now ends with an Assure plan, its live verification and a drill) reports
+ALL CHECKS PASSED, the validation figures for both twins are in DESIGN.md §9 and the live
+benchmark in §11.9.
 
 ## 5. Project layout
 
 ```
-topologies/          default.json (5 routers, 2 switches, 2 clients, 2 servers), small.json
+topologies/          default.json (5 routers, 2 switches, 2 clients, 2 servers), small.json,
+                     abilene.json (the Internet2 research backbone), metro-ring.json; user/ = saved designs
 backend/netvista/
-  topology/          JSON model + validation, derived IP addressing plan
+  topology/          JSON model + validation, derived IP addressing plan, library + design checks
   emulation/         Mininet builder, tc/netem/htb, nsenter helpers, iperf3 traffic manager
   telemetry/         probe agent (runs in each namespace), /proc + tc counters, health views
   chaos/             reversible fault injection mapped to tc / ip link
   routing/           own Dijkstra + Yen, path score, policy-route installer, controller
-  simulator/         SimPy packet model, model-based calibration, what-if + routing prediction
+                     (static / adaptive with herd guard / intent plans with backups + WTR)
+  simulator/         SimPy packet model, fluid model (fast twin), calibration, what-if + routing prediction
   validation/        predict → apply live → measure → compare
   scenarios/         record / replay, scripted demo
   ai/                signals, learned-baseline detector, probe-path root cause, evaluation
     copilot/         LLM agent: providers (Claude / Ollama), tools, grounding check, prompt
+  assure/            intents, failure analysis, planner, autopilot, drills, live benchmark,
+                     prediction intervals (conformal pool)
   api/               FastAPI REST + WebSocket, serves the built UI
   runtime.py         wires everything together, composes the live snapshot
 backend/tests/       pytest (unit + Mininet smoke tests)
 frontend/src/        React + TypeScript + Tailwind + Cytoscape.js + Recharts
-scripts/             run.ps1 (Windows), run.sh / stop.sh / setup_wsl.sh (Linux/WSL), checks
-runs/                event log, calibration, validation + AI evaluation runs, scenarios (git-ignored)
+scripts/             run.ps1 (Windows), run.sh / stop.sh / setup_wsl.sh (Linux/WSL), checks,
+                     export_results.py; diagnostics/ = the WSL2 packet-path stall reproduction
+runs/                event log, calibration, validation + AI evaluation runs, intents, residual
+                     pool, drills, benchmarks, deployment ledger, scenarios (git-ignored)
 .env.example         copilot settings (copy to .env, git-ignored)
 ```
 
 ## 6. Known limitations
 
-Short version (details in DESIGN.md §14):
+Short version (details in DESIGN.md §16):
 
 * Failure detection is probe-based (10 Hz, 1.2 s dead interval), so it takes ~1.3 s, like BFD.
   It is not sub-second.
@@ -380,7 +490,8 @@ Short version (details in DESIGN.md §14):
 * Under heavy tail-drop overload the twin predicts the bottleneck's total goodput and the
   queueing delay accurately, but not how the loss is split between flows (that depends on
   kernel packet micro-timing).
-* Traffic is UDP CBR (iperf3). TCP dynamics are not modelled.
+* Traffic is UDP CBR (iperf3). TCP dynamics are not modelled, by either twin, so Assure's
+  predictions cover the traffic the emulation carries.
 * Scale is tens of nodes (Python threads per probe stream, packet-level twin).
 * The AI detector is bounded by the probe rate (10/s). About 1 % random loss takes many seconds
   to separate from chance, unless iperf3 traffic crosses the link.
@@ -388,7 +499,14 @@ Short version (details in DESIGN.md §14):
   told apart, so both are shown.
 * A local LLM on a CPU-only laptop takes minutes per answer. Claude takes seconds, but needs an
   API key.
-* eBPF/XDP telemetry and a topology editor were not built.
+* Assure plans paths, not capacity: when no routing can meet an intent after a failure it says
+  so ("unavoidable") but does not propose an upgrade. Double failures are analysed, not
+  pre-planned. Prediction intervals are empirical, with measured (not guaranteed) coverage.
+* On WSL2 the namespaced packet path freezes for ~1 s about every 33 s. This is reproduced
+  without NETVISTA by `scripts/diagnostics/netns_stall.sh`. Every probe goes mute at once, so
+  NETVISTA recognises these stalls and does not count them as link failures (they are logged as
+  `telemetry.stall`). A real failure that starts during a stall is detected up to ~1 s later.
+* eBPF/XDP telemetry was not built.
 
 ## 7. Troubleshooting
 

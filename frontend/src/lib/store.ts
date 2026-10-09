@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { api } from "./api";
+import { setRouterIds } from "./format";
 import type { AddressPlan, NvEvent, Snapshot, Topology } from "./types";
 
 export type Selection = { kind: "node" | "link"; id: string } | null;
@@ -18,6 +19,9 @@ interface State {
   topology: Topology | null;
   plan: AddressPlan | null;
   pairs: string[];
+  /** runtime instance the topology was loaded from; a redeploy changes it */
+  bootId: string | null;
+  topologyFile: string | null;
   snap: Snapshot | null;
   lastTick: number;
   events: NvEvent[];
@@ -36,6 +40,8 @@ export const useStore = create<State>((set) => ({
   status: "starting",
   error: null,
   topology: null,
+  bootId: null,
+  topologyFile: null,
   plan: null,
   pairs: [],
   snap: null,
@@ -63,8 +69,19 @@ function mergeEvents(prev: NvEvent[], incoming: NvEvent[]): NvEvent[] {
 async function loadTopology(): Promise<void> {
   for (;;) {
     try {
-      const t = await api.get<{ topology: Topology; plan: AddressPlan; flow_pairs: string[]; status: string; error: string | null }>("/api/topology");
-      useStore.setState({ topology: t.topology, plan: t.plan, pairs: t.flow_pairs, status: t.status, error: t.error });
+      const t = await api.get<{ topology: Topology; plan: AddressPlan; flow_pairs: string[]; status: string; error: string | null; boot_id: string; file: string }>("/api/topology");
+      setRouterIds(t.topology.nodes.filter((n) => n.type === "router").map((n) => n.id));
+      useStore.setState((s) => ({
+        topology: t.topology,
+        plan: t.plan,
+        pairs: t.flow_pairs,
+        status: t.status,
+        error: t.error,
+        bootId: t.boot_id,
+        topologyFile: t.file,
+        // a different network: per-link history and the selection belong to the old one
+        ...(s.bootId && s.bootId !== t.boot_id ? { linkSeries: {}, selected: null } : {}),
+      }));
       return;
     } catch {
       await new Promise((r) => setTimeout(r, 1500));
@@ -96,6 +113,12 @@ export function connect(): void {
         useStore.setState((s) => ({ status: msg.status, error: msg.error, events: mergeEvents(s.events, msg.events ?? []) }));
       } else if (msg.type === "tick") {
         const snap: Snapshot = msg.snapshot;
+        const st = useStore.getState();
+        if (snap.boot_id && st.bootId && snap.boot_id !== st.bootId) {
+          // redeployed: hold the old view until the new topology is loaded
+          void loadTopology();
+          return;
+        }
         useStore.setState((s) => {
           const series = { ...s.linkSeries };
           for (const [id, l] of Object.entries(snap.links)) {

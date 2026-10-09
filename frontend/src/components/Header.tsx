@@ -1,12 +1,15 @@
 import { api } from "../lib/api";
 import { useCopilot } from "../lib/copilot";
 import { act, useStore } from "../lib/store";
+import type { HostStalls } from "../lib/types";
 import { Spark } from "./Copilot";
 
-export type Page = "live" | "simulate" | "validation" | "ai" | "metrics" | "journey" | "scenarios";
+export type Page = "live" | "assure" | "design" | "simulate" | "validation" | "ai" | "metrics" | "journey" | "scenarios";
 
 const NAV: { id: Page; label: string }[] = [
   { id: "live", label: "Live network" },
+  { id: "assure", label: "Assure" },
+  { id: "design", label: "Designer" },
   { id: "simulate", label: "What-if twin" },
   { id: "validation", label: "Validation" },
   { id: "ai", label: "AI ops" },
@@ -23,6 +26,7 @@ export default function Header({ page }: { page: Page }) {
   const demo = snap?.jobs?.demo as { running?: boolean } | undefined;
   const rec = snap?.jobs?.recorder as { recording?: boolean; name?: string } | undefined;
   const agentsDown = snap ? Object.values(snap.agents).filter((a) => !a).length : 0;
+  const violated = snap?.assure?.counts?.violated ?? 0;
 
   return (
     <header className="flex h-14 shrink-0 items-center gap-4 border-b border-line bg-panel px-3 sm:px-5 lg:gap-6">
@@ -41,6 +45,9 @@ export default function Header({ page }: { page: Page }) {
             }`}
           >
             {n.label}
+            {n.id === "assure" && violated > 0 && (
+              <span className="ml-1.5 inline-block h-2 w-2 rounded-full bg-[#d03b3b]" title={`${violated} intent${violated > 1 ? "s" : ""} violated`} />
+            )}
           </a>
         ))}
       </nav>
@@ -50,11 +57,11 @@ export default function Header({ page }: { page: Page }) {
             <span className="h-2 w-2 rounded-full bg-[#d03b3b]" /> Recording “{rec.name}”
           </span>
         )}
-        <Conn conn={conn} agentsDown={agentsDown} />
+        <Conn conn={conn} agentsDown={agentsDown} stalls={snap?.host_stalls} />
         <CopilotButton />
         {mode && (
           <span className="hidden text-[12.5px] whitespace-nowrap text-ink-3 lg:inline">
-            Routing <span className="font-semibold text-ink">{mode === "adaptive" ? "adaptive" : "static"}</span>
+            Routing <span className="font-semibold text-ink">{mode === "intent" ? `plan ${snap?.routing.plan?.id ?? ""}` : mode}</span>
           </span>
         )}
         <button
@@ -72,12 +79,17 @@ export default function Header({ page }: { page: Page }) {
   );
 }
 
-function Conn({ conn, agentsDown }: { conn: string; agentsDown: number }) {
-  const ok = conn === "open" && agentsDown === 0;
-  const text = conn !== "open" ? (conn === "connecting" ? "Connecting" : "Backend offline") : agentsDown ? `${agentsDown} probe agents down` : "Emulation live";
+function Conn({ conn, agentsDown, stalls }: { conn: string; agentsDown: number; stalls?: HostStalls }) {
+  const stalled = conn === "open" && !!stalls?.active;
+  const ok = conn === "open" && agentsDown === 0 && !stalled;
+  const text = conn !== "open" ? (conn === "connecting" ? "Connecting" : "Backend offline") : agentsDown ? `${agentsDown} probe agents down` : stalled ? "Host stall" : "Emulation live";
+  const stallNote = stalls?.count
+    ? `\nHost stalls recognised: ${stalls.count} (longest ${stalls.longest_s?.toFixed(2)} s${stalls.median_period_s ? `, about every ${Math.round(stalls.median_period_s)} s` : ""}). ` +
+      `Every probe went mute at once: the host's packet path froze, not a link. Not counted as failures; ${stalls.excluded_samples} probe samples left out.`
+    : "";
   return (
-    <span className="inline-flex items-center gap-1.5 text-[12.5px] whitespace-nowrap text-ink-2" title={`${text}: WebSocket to the backend that drives the Mininet emulation`}>
-      <span className={`h-2 w-2 rounded-full ${ok ? "bg-[#0ca30c]" : conn === "connecting" ? "bg-[#fab219]" : "bg-[#d03b3b]"}`} />
+    <span className="inline-flex items-center gap-1.5 text-[12.5px] whitespace-nowrap text-ink-2" title={`${text}: WebSocket to the backend that drives the Mininet emulation${stallNote}`}>
+      <span className={`h-2 w-2 rounded-full ${ok ? "bg-[#0ca30c]" : conn === "connecting" || stalled ? "bg-[#fab219]" : "bg-[#d03b3b]"}`} />
       <span className="hidden lg:inline">{text}</span>
     </span>
   );

@@ -12,6 +12,11 @@ const REASON: Record<string, string> = {
   better: "moved to a better-scoring path",
   static: "static Dijkstra path",
   keep: "kept",
+  plan: "pinned by the intent plan",
+  protect: "moved to its pre-planned backup path",
+  revert: "back on its planned primary path",
+  rollback: "restored by an automatic rollback",
+  "failover (unplanned)": "failed over (failure not covered by the plan)",
 };
 
 export function PathSelection() {
@@ -102,13 +107,36 @@ export function RoutingPolicy() {
       <div className="flex items-center justify-between">
         <h2 className="panel-title">Routing policy</h2>
         <div className="seg" role="group" aria-label="Routing mode">
-          {(["static", "adaptive"] as const).map((m) => (
-            <button key={m} aria-pressed={r.mode === m} onClick={() => act(() => api.post("/api/routing/mode", { mode: m }))}>
-              {m === "static" ? "Static (Dijkstra)" : "Adaptive (scored)"}
+          {(["static", "adaptive", "intent"] as const).map((m) => (
+            <button
+              key={m}
+              aria-pressed={r.mode === m}
+              disabled={m === "intent" && !r.plan}
+              title={m === "intent" ? (r.plan ? `Follow plan ${r.plan.id} and its pre-planned backups` : "Make and apply a plan on the Assure page first") : undefined}
+              onClick={() => act(() => api.post("/api/routing/mode", { mode: m }))}
+            >
+              {m === "static" ? "Static" : m === "adaptive" ? "Adaptive" : "Intent plan"}
             </button>
           ))}
         </div>
       </div>
+      {r.mode === "intent" && r.plan && (
+        <p className="mt-2 text-[13px] text-ink-2">
+          Following plan <span className="font-semibold text-ink">{r.plan.id}</span>: pinned primary paths and pre-planned backups for {r.plan.protected.length} failures
+          {r.scenario ? <span className="text-[#ffd27a]">; serving failure scenario {r.scenario}</span> : ""}. Restored links are trusted again after {r.wtr_s ?? 5} s
+          (wait-to-restore). <a className="underline" href="#assure?tab=plan">Plan details</a>
+        </p>
+      )}
+      <label className="mt-3 flex items-start gap-2 text-[13px]">
+        <input type="checkbox" className="mt-0.5" checked={!!r.herd_guard} onChange={(e) => act(() => api.post("/api/routing/herd_guard", { on: e.target.checked }))} />
+        <span>
+          <span className="text-ink">Herd guard</span>
+          <span className="hint block">
+            Flows that move in the same tick see each other's load. Without it they all pick the same "empty" path and overload it (the delay-routing oscillation ARPANET
+            hit in 1979).
+          </span>
+        </span>
+      </label>
       <div className="mt-3 grid grid-cols-3 gap-3 text-[13px]">
         {(
           [
