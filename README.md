@@ -20,6 +20,184 @@ Nothing is mocked.
 See **[DESIGN.md](DESIGN.md)** for the architecture, every design decision, the validation
 results and the limitations.
 
+**Contents:** [Features](#features) · [Architecture](#architecture) · [How it works](#how-it-works)
+· [Results](#results) · [1. Requirements](#1-requirements) · [2. Run it](#2-run-it-one-command)
+· [3. Demo](#3-how-to-demo-each-phase) · [4. Tests](#4-tests) · [5. Layout](#5-project-layout)
+· [6. Limitations](#6-known-limitations) · [7. Troubleshooting](#7-troubleshooting)
+
+---
+
+## Features
+
+| Area | What you get |
+|---|---|
+| **Live network** | 11 devices (5 Linux routers, 2 Open vSwitch switches, 2 clients, 2 servers) in Mininet. The map shows real counters, probe RTT and loss, with packet comets driven by interface packets/s |
+| **Chaos lab** | Reversible latency, loss, bandwidth caps, link-down, router crash and traffic bursts, applied with `tc`/`netem`/`ip link` |
+| **Adaptive routing** | Own Dijkstra + Yen K-shortest paths, a latency/loss/load score, make-before-break policy routes, failure detection in ~1.3 s, reroute in ~15-55 ms |
+| **Digital twin** | A SimPy model of the same topology, calibrated from live probes. Predict a change before applying it, then validate the prediction against the real network |
+| **AI layer** | Learned-baseline anomaly detection, probe-path root-cause analysis, and a grounded LLM copilot that can only *propose* changes |
+| **Packet journey, metrics, scenarios** | Per-hop kernel routing decisions, traceroute, 15 min metrics, record/replay and a one-button demo |
+
+## Architecture
+
+```mermaid
+flowchart LR
+    subgraph Browser["Browser (React, Cytoscape, Recharts)"]
+        UI["Live map, What-if twin,<br/>Validation, AI ops, Copilot"]
+    end
+
+    subgraph API["FastAPI (REST + WebSocket 2 Hz + SSE)"]
+        RT["Runtime<br/>owns every subsystem"]
+    end
+
+    subgraph WSL["WSL2 / Linux (root)"]
+        EMU["emulation<br/>Mininet, OVS, tc/netem, iperf3"]
+        TEL["telemetry<br/>probe agents + /proc counters"]
+        CHAOS["chaos<br/>fault injection"]
+        ROUTE["routing<br/>Dijkstra, Yen, score,<br/>policy-route installer"]
+        SIM["simulator (separate process)<br/>SimPy twin + calibration"]
+        VAL["validation<br/>predict, apply, measure, compare"]
+        AI["ai<br/>anomaly detector, root cause,<br/>evaluation, copilot"]
+    end
+
+    LLM[("Claude API<br/>or local Ollama")]
+
+    UI <-->|"REST, WebSocket, SSE"| RT
+    RT --- EMU & TEL & CHAOS & ROUTE & SIM & VAL & AI
+    CHAOS -->|"tc, ip link"| EMU
+    TEL -->|"probes, counters"| EMU
+    ROUTE -->|"ip route / ip rule"| EMU
+    SIM -.->|"calibrated from"| TEL
+    VAL --> SIM
+    VAL --> CHAOS
+    AI -.->|"reads measurements only"| TEL
+    AI -->|"tool calls"| LLM
+```
+
+### The emulated topology
+
+```mermaid
+flowchart LR
+    c1([Client 1]) --- sw1{{"Site A switch<br/>(OVS)"}}
+    c2([Client 2]) --- sw1
+    sw1 --- r1[R1 edge A]
+    r1 ---|"50 Mbit/s, 5 ms"| r2[R2]
+    r1 ---|"50 Mbit/s, 8 ms"| r3[R3]
+    r2 ---|"50 Mbit/s, 3 ms"| r4[R4]
+    r3 ---|"50 Mbit/s, 3 ms"| r4
+    r2 ---|"30 Mbit/s, 5 ms (bottleneck)"| r5[R5 edge B]
+    r3 ---|"50 Mbit/s, 8 ms"| r5
+    r4 ---|"50 Mbit/s, 4 ms"| r5
+    r5 --- sw2{{"Site B switch<br/>(OVS)"}}
+    sw2 --- srv1([Server 1])
+    sw2 --- srv2([Server 2])
+```
+
+Routers are Linux network namespaces, so every routing decision is a real kernel decision you
+can inspect with `ip route get` and `traceroute`.
+
+## How it works
+
+### Failure detection and reroute
+
+```mermaid
+sequenceDiagram
+    participant U as Operator
+    participant C as Chaos lab
+    participant N as Emulated network
+    participant P as Probe agents (10 Hz)
+    participant R as Routing controller
+    participant A as AI layer
+    U->>C: take link r2-r5 down
+    C->>N: ip link set down (both ends)
+    P--xN: echoes stop
+    Note over P,R: no echo for 1.2 s (dead interval)
+    P->>R: link declared dead (~1.3 s)
+    R->>N: install new routes make-before-break (~15-55 ms)
+    P->>R: first end-to-end echo on the new path
+    Note over R: recovery measured (~1.45 s)
+    P->>A: same probes, never the fault list
+    A->>A: tomography names link r2-r5 as the cause
+```
+
+### AI pipeline
+
+```mermaid
+flowchart TD
+    S["47 signals sampled at 1 Hz<br/>link RTT/loss/load, access, flow RTT/loss,<br/>iperf3 data loss"] --> D["Learned-baseline detector<br/>EWMA mean + spread per signal"]
+    D -->|"z >= 4 for 3 s<br/>(or z >= 8 for 2 s)"| AN["Anomalies"]
+    L["Probe liveness + paths"] --> T
+    AN --> T["Probe-path tomography<br/>greedy cover: bad probes explained,<br/>good probes contradict"]
+    T --> DX["Diagnosis<br/>element, fault type, confidence,<br/>alternatives, side effects"]
+    DX --> MAP["Map marker +<br/>Likely cause tag"]
+    DX --> CP["Copilot tools"]
+    AN --> CP
+```
+
+```mermaid
+stateDiagram-v2
+    [*] --> Learning
+    Learning --> Normal: 20 samples
+    Normal --> Anomalous: z >= 4 for 3 s
+    Anomalous --> Normal: z < 2 for 5 s
+    Anomalous --> Anomalous: baseline frozen
+    Normal --> Learning: Re-learn
+```
+
+### Copilot: it proposes, you decide
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant UI as Copilot drawer
+    participant AG as Agent loop
+    participant M as LLM (Claude or Ollama)
+    participant T as Tools
+    participant N as Live network
+    U->>UI: "Add 30 ms to r1-r3"
+    UI->>AG: question + page context (SSE stream)
+    AG->>M: question, tools
+    M->>AG: call propose_change
+    AG->>T: validate change
+    T-->>AG: proposal card (NOT applied)
+    AG-->>UI: tool row, card, answer, grounding check
+    U->>UI: Predict impact first
+    UI->>T: twin what-if (labelled Simulation)
+    U->>UI: Apply
+    UI->>N: chaos inject (logged as approved by the user)
+```
+
+The model has read tools (live state, AI insights, events), one simulate tool (the twin) and
+propose tools. It has no tool that changes the network. After each answer, every measured
+value is looked up in the data the model read; values it cannot trace are underlined.
+
+### Validation loop
+
+```mermaid
+flowchart LR
+    P["1. Predict<br/>(twin, frozen)"] --> A["2. Apply the same<br/>change live"]
+    A --> S["3. Settle 8 s"]
+    S --> M["4. Measure 12 s<br/>probes + iperf3"]
+    M --> R["5. Revert"]
+    R --> C["6. Compare<br/>latency, throughput,<br/>loss, path"]
+```
+
+## Results
+
+All measured on the live emulation (Windows 11, WSL2 Ubuntu 24.04). Details in DESIGN.md.
+
+| Measurement | Result |
+|---|---|
+| Failure detection / reroute / recovery | ~1.3 s / 15-55 ms / ~1.45 s |
+| Twin error, RTT p50 | 0.21 % (p95: 1.52 %) |
+| Twin error, bottleneck throughput | 0.09 % total, 1.06 % per flow |
+| Twin loss error / paths predicted | 0.79 pp / 100 % |
+| AI detector, 8 injected faults (2 runs) | 8 of 8 caught (threshold rules: 7 of 8, missed +2 ms) |
+| AI root cause named correctly | 8 of 8 |
+| AI false alarms in a quiet minute | 0 |
+| AI mean time to detect | ~3.0 s (threshold rules ~1.7 s: slower on hard faults, better on subtle ones) |
+| Tests | 133 unit + 2 Mininet smoke tests; `live_check.py` all checks passed |
+
 ---
 
 ## 1. Requirements
