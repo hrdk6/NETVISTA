@@ -1,0 +1,12 @@
+.git
+.env
+.idea
+.playwright-mcp
+**/node_modules
+frontend/dist
+**/__pycache__
+**/.pytest_cache
+*.tsbuildinfo
+runs
+docs/img
+backend/tests

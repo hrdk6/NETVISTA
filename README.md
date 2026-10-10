@@ -374,6 +374,24 @@ cd frontend && npm install && npm run build && cd ..
 sudo bash scripts/run.sh            # first run calls scripts/setup_wsl.sh
 ```
 
+**Docker** (any machine with Docker; on Windows, Docker Desktop with the WSL2 backend):
+
+```bash
+docker compose up --build        # then open http://localhost:8000
+# or, without compose:
+docker build -t netvista .
+docker run --rm -it --privileged -p 8000:8000 -v netvista-runs:/app/runs --env-file .env netvista
+```
+
+`--privileged` is required: Mininet creates network namespaces, veth pairs and tc qdiscs, and
+Open vSwitch needs the host kernel's `openvswitch`, `sch_netem` and `sch_htb` modules (the WSL2
+kernel behind Docker Desktop has them). The `.env` file is optional; it is read by Docker at
+start-up and never copied into the image. Measurements, drills and benchmarks live in the
+`netvista-runs` volume. Only one copy can run at a time: stop the WSL one first. Tested: the
+container boots the default network, carries iperf3 traffic, detects a link failure in 1.25 s
+and reroutes in 20 ms. Inside Docker the Windows-side Ollama fallback is not available; use
+Gemini, Groq or Claude keys.
+
 **UI development** (hot reload, backend still in WSL): `cd frontend && npm run dev`, then open
 <http://localhost:5173> (it proxies `/api` and `/ws` to :8000).
 
